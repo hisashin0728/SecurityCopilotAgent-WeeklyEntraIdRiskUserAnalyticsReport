@@ -48,11 +48,7 @@ Security Copilot（週次スケジュール or 手動）
         │     失敗サインイン詳細（ユーザー/エラーコード/国/IP 別集計）
         │
         ├── GetRiskSignIns              ──▶ Sentinel KQL (SigninLogs)
-        │     リスク付きサインイン＋高リスクサインイン詳細
-        │
-        ├── GetEntraRiskyUsers          ──▶ Entra プラグイン (Microsoft Graph)
-        │     リスクユーザー一覧 (High / Medium / Low)
-        │     ※権限エラー時はスキップし KQL のリスク情報で代替
+        │     リスク付きサインイン＋高リスクサインイン詳細＋リスクユーザー抽出
         │
         └── [HTML レポート生成]
               ├── KPI カード ×4（先週比付き）
@@ -77,9 +73,8 @@ Security Copilot（週次スケジュール or 手動）
 | 傾向分析 | `GetWeeklySignInTrend` | Sentinel KQL | 今週の日別サインイン集計 + 先週同曜日との増減列（成功・失敗・失敗率） |
 | 異常検出 | `GetAnomalousFailedSignIns` | Sentinel KQL | 平均+2σ超過の異常失敗ユーザー検出 |
 | 失敗詳細 | `GetFailedSignInDetails` | Sentinel KQL | ユーザー/エラーコード/国/IP 別の失敗集計（上位100件） |
-| リスクサインイン | `GetRiskSignIns` | Sentinel KQL | リスク付きサインイン + 高リスクサインイン詳細 |
+| リスクサインイン | `GetRiskSignIns` | Sentinel KQL | リスク付きサインイン + 高リスクサインイン詳細 + リスクユーザー抽出 |
 | ユーザープロファイル | `GetEntraData` | Entra プラグイン | 検出ユーザーの氏名・役職・部署・ディレクトリロール |
-| リスクユーザー | `GetEntraRiskyUsers` | Entra プラグイン | リスクありユーザー一覧（High/Medium/Low） |
 | メール送信 | `SendSocReportEmail` | LogicApp | HTML レポートを Outlook メールで送信 |
 
 ---
@@ -104,18 +99,17 @@ WeeklyEntraIdRiskUserAnalyticsReport/
 
 ---
 
-## ワークフロー（8 Step）
+## ワークフロー（7 Step）
 
 | Step | スキル | データソース | 内容 |
 |---|---|---|---|
-| 1 | `GetWeeklySignInTrend` | Sentinel KQL | 今週 vs 先週の日別サインイン集計 |
+| 1 | `GetWeeklySignInTrend` | Sentinel KQL | 今週の日別サインイン集計 + 先週同曜日増減 |
 | 2 | `GetAnomalousFailedSignIns` | Sentinel KQL | 統計的異常ユーザー検出 |
 | 3 | `GetEntraData` | Entra プラグイン | 検出ユーザーの氏名・役職・部署・ロール取得 |
 | 4 | `GetFailedSignInDetails` | Sentinel KQL | 失敗サインイン詳細集計 |
-| 5 | `GetRiskSignIns` | Sentinel KQL | リスクサインイン取得 |
-| 6 | `GetEntraRiskyUsers` | Entra プラグイン | リスクユーザー一覧（権限エラー時スキップ） |
-| 7 | エージェント | — | HTML レポート生成 |
-| 8 | `SendSocReportEmail` | LogicApp | Outlook メール送信 |
+| 5 | `GetRiskSignIns` | Sentinel KQL | リスクサインイン + リスクユーザー抽出 |
+| 6 | エージェント | — | HTML レポート生成 |
+| 7 | `SendSocReportEmail` | LogicApp | Outlook メール送信 |
 
 ---
 
@@ -242,7 +236,7 @@ Sentinel 不要・Logic App 不要の簡易版です。
 | KQL スキルでエラー | Sentinel 設定（テナント ID・サブスクリプション ID・リソースグループ・ワークスペース名）を確認 |
 | SigninLogs テーブルにデータがない | Entra 管理センター → 監視 → 診断設定 で SigninLogs の Log Analytics 転送を確認 |
 | リスクユーザーが常に 0 件 | Entra ID P2 ライセンスが割り当てられているか確認 |
-| `GetEntraRiskyUsers` で権限エラー | `IdentityRiskyUser.Read.All` 権限が未付与。エージェントはスキップして KQL のリスク情報で代替 |
+| `GetEntraRiskyUsers` で権限エラー | 本バージョンでは使用しません。KQL の `GetRiskSignIns` でリスク情報を取得 |
 | `GetEntraData` でユーザー情報取得失敗 | エージェントはスキップして UPN のみでレポートを生成 |
 
 ---
