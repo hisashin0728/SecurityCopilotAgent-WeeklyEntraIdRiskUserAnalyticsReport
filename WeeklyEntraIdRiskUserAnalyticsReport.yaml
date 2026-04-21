@@ -4,7 +4,9 @@ Descriptor:
   Description: >-
     Entra ID のサインインログおよび Entra ID P2 のリスク情報を収集・分析し、
     SOC 向けに視認性の高い HTML/CSS レポートを生成して Outlook メールで通知する
-    週次エージェントです。週次スケジュールまたは手動で実行します。
+    週次エージェントです。Sentinel の SigninLogs テーブルを KQL で集計し、
+    先週比較の傾向分析と異常失敗ユーザーの検出を含むレポートを生成します。
+    週次スケジュールまたは手動で実行します。
   Settings:
     - Name: LogicAppSubscriptionId
       Label: Logic App サブスクリプション ID
@@ -29,6 +31,37 @@ Descriptor:
       HintText: "例: SocReportEmailLogicApp"
       SettingType: String
       Required: true
+    - Name: SentinelSubscriptionId
+      Label: Sentinel サブスクリプション ID
+      Description: >-
+        Microsoft Sentinel ワークスペースが存在する
+        Azure サブスクリプション ID を指定してください。
+      HintText: "例: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+      SettingType: String
+      Required: true
+    - Name: SentinelResourceGroup
+      Label: Sentinel リソースグループ
+      Description: >-
+        Microsoft Sentinel ワークスペースの
+        リソースグループ名を指定してください。
+      HintText: "例: rg-sentinel"
+      SettingType: String
+      Required: true
+    - Name: SentinelWorkspaceName
+      Label: Sentinel ワークスペース名
+      Description: >-
+        Microsoft Sentinel の Log Analytics ワークスペース名を指定してください。
+      HintText: "例: law-sentinel"
+      SettingType: String
+      Required: true
+    - Name: SentinelTenantId
+      Label: Sentinel テナント ID
+      Description: >-
+        Microsoft Sentinel ワークスペースの
+        Microsoft Entra テナント ID を指定してください。
+      HintText: "例: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+      SettingType: String
+      Required: true
 
 AgentDefinitions:
   - Name: WeeklyEntraIdRiskUserAnalyticsReport
@@ -42,6 +75,7 @@ AgentDefinitions:
     RequiredSkillsets:
       - WeeklyEntraIdRiskUserAnalyticsReport
       - Entra
+      - Sentinel
     AgentSingleInstanceConstraint: Workspace
     Triggers:
       - Name: WeeklySchedule
@@ -72,45 +106,53 @@ SkillGroups:
             Outlook メールで通知することがあなたの使命です。
 
             # 使用スキルと役割
-            - **GetEntraSignInLogsV1**: サインインログの取得・フィルタリングに使用する。
-              Status, RiskLevelDuringSignIn, Location, IPAddress, AppDisplayName, Interactive などで
-              フィルタ可能。取得したログからエージェント自身が集計・分析を行う。
-            - **GetEntraRiskyUsers**: Entra ID P2 のリスクありユーザー一覧の取得に使用する。
-              High/Medium/Low のリスクレベルでフィルタ可能。
+            - **GetWeeklySignInTrend** (KQL/Sentinel): SigninLogs テーブルから今週と先週のサインイン
+              成功・失敗数を日別に集計し、前週比の傾向を分析する。
+            - **GetAnomalousFailedSignIns** (KQL/Sentinel): SigninLogs テーブルから過去 7 日間の
+              失敗サインインをユーザー別に集計し、統計的に異常なユーザーを検出する。
+            - **GetEntraSignInLogsV1** (Entra プラグイン): 失敗サインインの詳細ログを取得する。
+            - **GetEntraRiskyUsers** (Entra プラグイン): Entra ID P2 のリスクありユーザー一覧の取得に使用する。
               権限エラーで失敗した場合はスキップし、サインインログのリスク情報で代替する。
-
-            **重要**: GetEntraData は使用しないこと（Graph API $count の制約により
-            多くのテナントで失敗するため）。すべてのデータ取得は GetEntraSignInLogsV1 を使用し、
-            集計・カウントはエージェント自身が行う。
 
             # ワークフロー
 
-            ## Step 1: 失敗サインインの取得
+            ## Step 1: 週次サインイン傾向分析（KQL）
+            GetWeeklySignInTrend を呼び出す。
+            このスキルは Sentinel の SigninLogs テーブルから今週（7日間）と先週（7日間）の
+            サインイン成功数・失敗数を日別に集計して返す。
+            取得結果から以下を分析する：
+            - 今週 vs 先週の成功・失敗総数の比較（増減率）
+            - 日別の傾向（特定の曜日や時間帯での集中）
+            - 失敗率の先週比変化
+
+            ## Step 2: 異常失敗サインインユーザーの検出（KQL）
+            GetAnomalousFailedSignIns を呼び出す。
+            このスキルは Sentinel の SigninLogs テーブルから過去 7 日間の失敗サインインを
+            ユーザー別に集計し、統計的に異常な失敗パターンを持つユーザーを返す。
+            異常検出の基準：失敗数が全ユーザー平均 + 2標準偏差を超えるユーザー。
+            結果にはユーザー名・失敗数・エラーコード分布・アクセス元国・IP が含まれる。
+
+            ## Step 3: 失敗サインイン詳細の取得
             GetEntraSignInLogsV1 を使い「過去 7 日間の失敗サインインを
             ユーザー・エラーコード・場所・IPアドレス・日時を含めて上位 999 件取得して」と問い合わせる。
-            取得したレコードから以下を自分で集計する：
-            - 失敗サインイン総数
-            - ユーザー別・エラーコード別・IP 別の失敗件数
-            - 日別の失敗件数（時系列）
-            - 国・地域別の失敗件数（上位 10 カ国）
 
-            ## Step 2: リスクユーザーの取得
+            ## Step 4: リスクユーザーの取得
             GetEntraRiskyUsers を使い「現在リスク状態にある全ユーザーの一覧を
             リスクレベル・リスク状態・詳細とともに返して」と問い合わせる。
-            **このスキルが権限エラーで失敗した場合**: スキップし、Step 4 の高リスク
+            **このスキルが権限エラーで失敗した場合**: スキップし、Step 6 の高リスク
             サインイン情報をリスクユーザーの代替情報として使用する。
 
-            ## Step 3: リスクイベントの取得
+            ## Step 5: リスクイベントの取得
             GetEntraSignInLogsV1 を使い「過去 7 日間のリスクレベルが none 以外の
             サインインをユーザー・リスクレベル・リスク詳細・場所・IPアドレスと共に
             上位 999 件取得して」と問い合わせる。
             取得したレコードからリスクイベント種別・リスクレベル別に自分で集計する。
 
-            ## Step 4: 高リスクサインインの取得
+            ## Step 6: 高リスクサインインの取得
             GetEntraSignInLogsV1 を使い「過去 7 日間のリスクレベルが High の
             サインインをユーザー・アプリ・場所・IPアドレスと共に返して」と問い合わせる。
 
-            ## Step 5: HTML レポートの生成
+            ## Step 7: HTML レポートの生成
             収集・分析したすべてのデータを統合し、以下の構造でメール送信に適した
             HTML+CSS レポートを生成する。
 
@@ -136,12 +178,25 @@ SkillGroups:
             - 分析期間（過去7日間）と生成日時 (JST) を表示
 
             ### セクション1: KPI サマリーカード（4枚）
-            - 失敗サインイン総数・失敗ユニークユーザー数・アクティブリスクユーザー数・高リスクサインイン数
+            - 今週の失敗サインイン総数（先週比 +/-XX%）・異常失敗検出ユーザー数・アクティブリスクユーザー数・高リスクサインイン数
             - 各カードはリスクに応じて背景色を色分け
               (正常: #107C10, 警告: #D66D00, 危険: #D13438)
             - テーブルセルを使ったカード形式（4列レイアウト）
 
-            ### セクション2: 全体傾向分析・危険ユーザー兆候レポート
+            ### セクション2: 週次サインイン傾向分析（今週 vs 先週）
+            GetWeeklySignInTrend の結果を使い、以下をテーブルと分析文で記載する。
+            - 今週・先週の日別サインイン集計（日付 / 成功数 / 失敗数 / 週）
+            - 今週合計 vs 先週合計の比較（成功数増減 / 失敗数増減 / 失敗率変化）
+            - 失敗が急増している場合は赤色ハイライト
+            - 傾向分析のサマリー（2〜3文）
+
+            ### セクション3: 異常失敗ユーザー検出レポート
+            GetAnomalousFailedSignIns の結果を使い、以下をテーブルと分析文で記載する。
+            - 異常検出されたユーザー一覧（UPN / 失敗数 / 主なエラーコード / アクセス元国 / IP）
+            - 異常検出基準（平均 + 2σの閾値）を表示
+            - 各ユーザーのリスク評価と推奨対応
+
+            ### セクション4: 全体傾向分析・危険ユーザー兆候レポート
             収集したすべてのデータ（失敗サインイン分析・リスクユーザー・リスクイベント・国別分布）を
             総合的に分析し、以下の内容を事実に基づいて記載する。
             推測・憶測は記載せず、取得データに存在する事実のみを根拠とすること。
@@ -261,7 +316,7 @@ SkillGroups:
             - パディング: セクション間 20px、セル内 8px 12px
             - 全スタイルをインライン (style 属性) で適用すること
 
-            ## Step 9: メール送信
+            ## Step 8: メール送信
             生成した HTML 全文を SendSocReportEmail の ReportHtml パラメータに渡して送信する。
 
             - HTML の生成が完了したら、必ずそのまま直ちに SendSocReportEmail を呼び出すこと。
@@ -276,9 +331,98 @@ SkillGroups:
             「次のステップ」や「これからメール送信します」のような途中経過では終了しないこと。
 
         ChildSkills:
+          - GetWeeklySignInTrend
+          - GetAnomalousFailedSignIns
           - GetEntraSignInLogsV1
           - GetEntraRiskyUsers
           - SendSocReportEmail
+
+  # ── KQL Skills (Sentinel SigninLogs) ──────────────────────────────
+  - Format: KQL
+    Skills:
+      - Name: GetWeeklySignInTrend
+        DisplayName: 週次サインイン傾向分析（今週 vs 先週）
+        Description: >-
+          Sentinel の SigninLogs テーブルから過去 14 日間のサインインを
+          今週（7日間）と先週（7日間）に分けて日別に成功・失敗数を集計し、
+          前週比の傾向を返す。
+        Settings:
+          Target: Sentinel
+          TenantId: "{{SentinelTenantId}}"
+          SubscriptionId: "{{SentinelSubscriptionId}}"
+          ResourceGroupName: "{{SentinelResourceGroup}}"
+          WorkspaceName: "{{SentinelWorkspaceName}}"
+          Template: |-
+            let thisWeekStart = startofday(ago(7d));
+            let lastWeekStart = startofday(ago(14d));
+            let lastWeekEnd = startofday(ago(7d));
+            SigninLogs
+            | where TimeGenerated >= lastWeekStart
+            | extend Week = iff(TimeGenerated >= thisWeekStart, "ThisWeek", "LastWeek")
+            | extend Day = startofday(TimeGenerated)
+            | extend IsSuccess = iff(ResultType == "0", true, false)
+            | summarize
+                SuccessCount = countif(IsSuccess),
+                FailureCount = countif(not(IsSuccess)),
+                TotalCount = count(),
+                UniqueUsers = dcount(UserPrincipalName),
+                UniqueApps = dcount(AppDisplayName)
+              by Day, Week
+            | order by Week asc, Day asc
+
+      - Name: GetAnomalousFailedSignIns
+        DisplayName: 異常失敗サインインユーザー検出
+        Description: >-
+          Sentinel の SigninLogs テーブルから過去 7 日間の失敗サインインを
+          ユーザー別に集計し、全ユーザー平均 + 2標準偏差を超える
+          異常な失敗パターンを持つユーザーを検出して返す。
+        Settings:
+          Target: Sentinel
+          TenantId: "{{SentinelTenantId}}"
+          SubscriptionId: "{{SentinelSubscriptionId}}"
+          ResourceGroupName: "{{SentinelResourceGroup}}"
+          WorkspaceName: "{{SentinelWorkspaceName}}"
+          Template: |-
+            let lookback = ago(7d);
+            let failedSignIns = SigninLogs
+            | where TimeGenerated >= lookback
+            | where ResultType != "0"
+            | summarize
+                FailureCount = count(),
+                DistinctErrorCodes = make_set(ResultType),
+                DistinctIPs = make_set(IPAddress),
+                DistinctCountries = make_set(LocationDetails.countryOrRegion),
+                FirstSeen = min(TimeGenerated),
+                LastSeen = max(TimeGenerated)
+              by UserPrincipalName;
+            let stats = failedSignIns
+            | summarize
+                AvgFailures = avg(FailureCount),
+                StdDevFailures = stdev(FailureCount);
+            let threshold = toscalar(stats | project AvgFailures + 2 * StdDevFailures);
+            let avgVal = toscalar(stats | project AvgFailures);
+            let stdVal = toscalar(stats | project StdDevFailures);
+            failedSignIns
+            | where FailureCount > threshold
+            | extend
+                Threshold = round(threshold, 1),
+                AvgFailures = round(avgVal, 1),
+                StdDevFailures = round(stdVal, 1),
+                ErrorCodesSummary = strcat_array(DistinctErrorCodes, ", "),
+                IPsSummary = strcat_array(DistinctIPs, ", "),
+                CountriesSummary = strcat_array(DistinctCountries, ", ")
+            | project
+                UserPrincipalName,
+                FailureCount,
+                Threshold,
+                AvgFailures,
+                StdDevFailures,
+                ErrorCodesSummary,
+                IPsSummary,
+                CountriesSummary,
+                FirstSeen,
+                LastSeen
+            | order by FailureCount desc
 
   # ── LogicApp Skill (Outlook 通知) ────────────────────────────────
   - Format: LogicApp
