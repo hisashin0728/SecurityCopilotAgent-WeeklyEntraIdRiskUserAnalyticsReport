@@ -23,16 +23,17 @@ Entra ID のサインインログおよび Entra ID P2 リスク情報をビル�
 
 ```
 Security Copilot（週次スケジュール or 手動）
-  └── SocReportOrchestrator (Agent / gpt-4.1)
-        │
-        ├── GetEntraData          ──▶ Entra プラグイン (Microsoft Graph)
-        │     サインイン統計・時系列・国別分布・リスク検出集計
+  └── SocReportOrchestrator (Agent / gpt-4o)
         │
         ├── GetEntraSignInLogsV1  ──▶ Entra プラグイン (Microsoft Graph)
-        │     失敗サインイン詳細（上位50件）・高リスクサインイン詳細
+        │     成功サインイン（上位999件）→ エージェントが統計・時系列・国別を集計
+        │     失敗サインイン（上位999件）→ エージェントがエラー分析・集計
+        │     リスク付きサインイン（上位999件）→ リスクイベント種別集計
+        │     高リスクサインイン → ユーザー・アプリ・場所・IP 詳細
         │
         ├── GetEntraRiskyUsers    ──▶ Entra プラグイン (Microsoft Graph)
         │     リスクユーザー一覧 (High / Medium / Low)
+        │     ※権限エラー時はスキップし、サインインログのリスク情報で代替
         │
         └── [HTML レポート生成]
               ├── KPI カード ×4
@@ -65,13 +66,15 @@ Security Copilot（週次スケジュール or 手動）
 
 ### 使用する Entra プラグインスキル
 
-Security Copilot の組み込みプラグイン **「Microsoft Entra」**（SkillsetName: `Entra`）が提供する以下の 3 スキルのみを使用します。
+Security Copilot の組み込みプラグイン **「Microsoft Entra」**（SkillsetName: `Entra`）が提供する以下の 2 スキルを使用します。
 
 | スキル名 | 取得元（Microsoft Graph API） | 取得内容 |
 |---|---|---|
-| `GetEntraData` | `/v1.0/` (汎用クエリ) | サインイン統計・時系列集計・国別分布・リスク検出（risk detections）集計 |
-| `GetEntraSignInLogsV1` | `/auditLogs/signIns` | サインインログ詳細（失敗・エラーコード・IP・場所・リスクレベルでフィルタ） |
-| `GetEntraRiskyUsers` | `/identityProtection/riskyUsers` | リスクありユーザー一覧（High / Medium / Low・atRisk 状態） |
+| `GetEntraSignInLogsV1` | `/auditLogs/signIns` | サインインログ全般（成功・失敗・リスク付き・高リスク）。エージェントが集計・分析を実施 |
+| `GetEntraRiskyUsers` | `/identityProtection/riskyUsers` | リスクありユーザー一覧（High / Medium / Low・atRisk 状態）。権限エラー時はスキップ |
+
+> **注意**: `GetEntraData` は Graph API の `$count` 制約により多くのテナントで失敗するため使用しません。
+> 統計・集計はすべて `GetEntraSignInLogsV1` でログを取得し、エージェントが自身で算出します。
 
 > **有効化方法**: Security Copilot ポータル → 左メニュー「プラグイン」→「Microsoft Entra」をオンにするだけです。  
 > カスタム KQL クエリ・ワークスペース ID・接続文字列などの設定は不要です。
@@ -102,9 +105,8 @@ WeeklyEntraIdRiskUserAnalyticsReport/
 
 | スキル名 | SkillSet | 役割 |
 |---|---|---|
-| `GetEntraData` | `Entra` | サインイン統計・時系列・国別分布・リスク検出の集計クエリ（Microsoft Graph） |
-| `GetEntraSignInLogsV1` | `Entra` | サインインログの詳細フィルタクエリ（失敗・高リスク） |
-| `GetEntraRiskyUsers` | `Entra` | リスクありユーザー一覧の取得（High / Medium / Low） |
+| `GetEntraSignInLogsV1` | `Entra` | サインインログの取得・フィルタクエリ（成功・失敗・リスク付き・高リスク）。エージェントが統計・集計を実施 |
+| `GetEntraRiskyUsers` | `Entra` | リスクありユーザー一覧の取得（High / Medium / Low）。権限エラー時はスキップ |
 
 ### LogicApp スキル
 
@@ -153,6 +155,18 @@ WeeklyEntraIdRiskUserAnalyticsReport/
 | **高リスクサインイン** | Entra ID P2 判定による High リスクサインイン |
 
 判定結果は「**推奨優先対応ユーザー一覧**」テーブルに UPN・リスク種別・根拠・推奨対応の形でまとめられます。
+
+### API 設計上の注意
+
+本エージェントは `GetEntraData`（Graph API `/auditLogs/signIns/$count`）を**使用しません**。  
+多くのテナントで `ConsistencyLevel: eventual` ヘッダーの制約により `$count` 操作が失敗するためです。
+
+すべてのデータは `GetEntraSignInLogsV1` でサインインログを取得し、エージェントが自身で以下を集計します：
+- 成功数・失敗数・成功率
+- ユニークユーザー数・ユニークアプリ数
+- 日別時系列（成功/失敗）
+- 国別サインイン分布
+- リスクイベント種別・リスクレベル別集計
 
 ### エラーコード日本語説明
 
@@ -253,247 +267,15 @@ Security Copilot のエージェント画面から対象エージェントを選
 | Entra データが取得できない | Security Copilot で「Entra」プラグインが有効化されているか確認 |
 | リスクユーザーが常に 0 件 | Entra ID P2 ライセンスが割り当てられているか確認 |
 | プラグイン設定項目が表示されない | YAML を再インストール（削除 → 再アップロード） |
-
-
-Microsoft Security Copilot 用カスタムエージェント。  
-Entra ID のサインインログおよび Entra ID P2 リスク情報をビルトインの **Entra プラグイン**から収集・分析し、Chart.js グラフ付き HTML レポートを生成して **Outlook メール**で CISO に通知します。
+| `GetEntraData` でエラー | 本エージェントでは使用しません。`GetEntraSignInLogsV1` に統一済み |
+| `GetEntraRiskyUsers` で権限エラー | `IdentityRiskyUser.Read.All` 権限が未付与。エージェントはスキップしてサインインログのリスク情報で代替します |
 
 ---
 
-## 概要
+## Markdown レポート版
 
-| 項目 | 内容 |
-|---|---|
-| **エージェント種別** | Interactive Agent（チャット対話型） |
-| **使用モデル** | gpt-4.1 |
-| **データソース** | Microsoft Entra ビルトインプラグイン（Sentinel 不要） |
-| **通知方法** | Azure Logic App → Office 365 Outlook |
-| **レポート形式** | HTML / CSS（Meiyro フォント、Chart.js グラフ×4） |
-
----
-
-## アーキテクチャ
-
-```
-CISO
-  │  「週次レポートを送信して」
-  ▼
-Security Copilot
-  └── CisoReportOrchestrator (Interactive Agent / gpt-4.1)
-        │
-        ├── GetEntraData          ──▶ Entra プラグイン (Microsoft Graph)
-        │     統計サマリー・時系列・国別分布・リスク検出集計
-        │
-        ├── GetEntraSignInLogsV1  ──▶ Entra プラグイン (Microsoft Graph)
-        │     失敗サインイン詳細・高リスクサインイン詳細
-        │
-        ├── GetEntraRiskyUsers    ──▶ Entra プラグイン (Microsoft Graph)
-        │     リスクユーザー一覧 (High / Medium / Low)
-        │
-        └── [HTML レポート生成]
-              ├── KPI カード ×4（総サインイン・成功率・リスクユーザー・高リスクサインイン）
-              ├── Chart.js グラフ ×4（折れ線・ドーナツ・横棒・棒）
-              ├── 詳細テーブル ×3
-              └── 推奨アクション（自動判定）
-                    │
-                    └── SendCisoReportEmail
-                          └── Azure Logic App ──▶ Outlook ──▶ CISO
-```
-
----
-
-## ファイル構成
-
-```
-EntraIdCiscoReportAgent/
-├── EntraIdCisoReportAgent.yaml          # Security Copilot エージェントマニフェスト
-├── CisoReportEmailLogicApp_ARM.json     # Outlook 送信用 Logic App ARM テンプレート
-├── EntraIdCisoReportAgent_card.html     # Plugin Card（参照用）
-└── README.md
-```
-
----
-
-## スキル一覧
-
-### Agent スキル
-
-| スキル名 | 役割 |
-|---|---|
-| `CisoReportOrchestrator` | 全ワークフローのオーケストレーター。データ収集 → HTML 生成 → メール送信を制御する |
-
-### 外部スキル（Entra ビルトインプラグイン）
-
-| スキル名 | SkillSet | 役割 |
-|---|---|---|
-| `GetEntraData` | `Entra` | 統計・時系列・国別分布・リスク検出の集計クエリ（Microsoft Graph） |
-| `GetEntraSignInLogsV1` | `Entra` | サインインログの詳細フィルタクエリ（失敗・高リスク） |
-| `GetEntraRiskyUsers` | `Entra` | リスクありユーザー一覧の取得 |
-
-### LogicApp スキル
-
-| スキル名 | 役割 |
-|---|---|
-| `SendCisoReportEmail` | HTML レポートを Outlook 経由で CISO に送信する |
-
----
-
-## 生成レポートの仕様
-
-### デザイン
-- **フォント**: Meiryo, "メイリオ", sans-serif
-- **プライマリカラー**: #0078D4（Microsoft ブランド）
-- **グラフ**: Chart.js（CDN）
-- **幅**: max-width: 900px（Outlook メール対応）
-
-### セクション構成
-
-| セクション | 内容 |
-|---|---|
-| ヘッダー | タイトル・生成日時（JST）・分析期間 |
-| KPI カード ×4 | 総サインイン数・成功率・リスクユーザー数・高リスクサインイン数 |
-| グラフ 1 | サインイン時系列（折れ線グラフ）：成功（青）/ 失敗（赤） |
-| グラフ 2 | リスクユーザー分布（ドーナツグラフ）：High / Medium / Low |
-| グラフ 3 | リスクイベント種別（横棒グラフ） |
-| グラフ 4 | 国別サインイン分布（棒グラフ、上位 10 カ国） |
-| テーブル 1 | 失敗サインイン詳細（ユーザー / エラーコード / 場所 / IP / 発生数） |
-| テーブル 2 | リスクユーザー一覧（UPN / リスクレベル / リスク状態 / 最終更新） |
-| テーブル 3 | 高リスクサインイン一覧（ユーザー / 日時 / アプリ / 国 / リスク詳細） |
-| 推奨アクション | データに基づき自動判定したセキュリティ推奨事項 |
-| フッター | 自動生成注記・エージェント名・日時 |
-
-### 推奨アクションの自動判定ロジック
-
-| 条件 | 推奨アクション |
-|---|---|
-| High リスクユーザーが 1 名以上 | 即時パスワードリセットおよび MFA 強制を推奨 |
-| 失敗サインインが全体の 10% 超 | ブルートフォース攻撃の可能性を調査推奨 |
-| 海外からのサインインを検出 | Conditional Access の地理的制限を確認推奨 |
-| Medium/High リスクイベントが 5 件超 | Identity Protection ポリシーの強化を推奨 |
-
----
-
-## 前提条件
-
-| 要件 | 詳細 |
-|---|---|
-| Microsoft Security Copilot | ライセンス済み・有効化済み |
-| Microsoft Entra プラグイン | Security Copilot で有効化済み |
-| Entra ID P2 ライセンス | リスクユーザー・リスク検出機能に必要 |
-| Azure サブスクリプション | Logic App のデプロイ先 |
-| Office 365 ライセンス | Outlook 送信アカウント |
-
-> **Sentinel は不要です。** データソースは Microsoft Entra ビルトインプラグイン（Microsoft Graph API）を使用します。
-
----
-
-## セットアップ手順
-
-### ステップ 1 — Logic App のデプロイ
-
-```bash
-az deployment group create \
-  --resource-group <YOUR-RESOURCE-GROUP> \
-  --template-file CisoReportEmailLogicApp_ARM.json \
-  --parameters defaultToAddress="ciso@contoso.com"
-```
-
-### ステップ 2 — Office 365 API 接続の認証
-
-Azure ポータルで `office365` API 接続を開き、**Outlook アカウントでサインイン**して認証を完了します。
-
-```
-Azure ポータル → リソースグループ → office365 (API 接続) → [接続の編集] → サインイン
-```
-
-### ステップ 3 — YAML のプレースホルダー置換
-
-`EntraIdCisoReportAgent.yaml` 内の以下の値を実際の値に置換します。
-
-| プレースホルダー | 置換内容 |
-|---|---|
-| `<YOUR-SUBSCRIPTION-ID>` | Azure サブスクリプション ID |
-| `<YOUR-RESOURCE-GROUP>` | Logic App のリソースグループ名 |
-
-### ステップ 4 — Security Copilot へのアップロード
-
-1. [Security Copilot ポータル](https://securitycopilot.microsoft.com) にアクセス
-2. 左メニュー **「プラグイン」** → **「カスタムプラグインをアップロード」**
-3. `EntraIdCisoReportAgent.yaml` を選択してアップロード
-4. **「アクティブエージェント」** の設定でエージェントを有効化
-
-### ステップ 5 — 実行確認
-
-チャット画面で以下のスターターショットから実行：
-
-```
-過去 7 日間の Entra ID サインインとリスク情報をまとめて CISO レポートを作成し、メールで送信してください。
-```
-
----
-
-## 使用例
-
-### スターターショット（チャット起動時に表示）
-
-```
-# 週次レポート生成
-過去 7 日間の Entra ID サインインとリスク情報をまとめて CISO レポートを作成し、メールで送信してください。
-
-# 月次リスク分析
-過去 30 日間のリスクユーザーとサインイン失敗の傾向を分析して CISO レポートを送付してください。
-
-# 高リスクユーザー集計
-高リスクユーザーだけに絞ったサマリーレポートを作成してください。
-```
-
-### フォローアップ質問の例
-
-```
-直近 24 時間のサインイン失敗をグラフ化してレポートしてください。
-リスクイベントの種類別内訳を表示してください。
-国別サインイン分布を分析してください。
-レポートを再生成して再送信してください。
-```
-
----
-
-## ARM テンプレートパラメーター
-
-`CisoReportEmailLogicApp_ARM.json` で設定可能なパラメーター：
-
-| パラメーター | 既定値 | 説明 |
-|---|---|---|
-| `defaultToAddress` | `ciso@contoso.com` | CISO のメールアドレス（デフォルト宛先） |
-| `location` | `resourceGroup().location` | デプロイリージョン |
-
----
-
-## Logic App のフロー
-
-```
-HTTP トリガー (manual)
-  │  受信: { subject, htmlBody, toAddress }
-  ▼
-Parse JSON
-  ▼
-Send CISO Report Email (Office 365 Outlook)
-  │  To:        toAddress（未指定時は defaultToAddress）
-  │  Subject:   subject
-  │  Body:      htmlBody（IsHtml: true）
-  │  Importance: High
-  ▼
-Response (200 OK)
-```
-
----
-
-## セキュリティ考慮事項
-
-- Logic App のエンドポイントは Security Copilot からのみ呼び出す設計です
-- Office 365 接続の認証情報は Azure Key Vault での管理を推奨します
-- メール送信アカウントには最小権限（Mail.Send スコープのみ）を付与してください
-- Logic App の `Access control (IP restrictions)` を設定することを推奨します
+HTML メール送信版に加え、**Markdown レポート版**（`WeeklyEntraIdRiskUserAnalyticsReport_md.yaml`）も提供しています。  
+PowerAutomate などの外部フローから呼び出し、Markdown テキストを出力するのみ（メール送信なし）です。
 
 ---
 
