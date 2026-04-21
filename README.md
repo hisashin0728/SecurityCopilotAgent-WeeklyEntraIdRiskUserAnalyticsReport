@@ -36,7 +36,7 @@ Security Copilot（週次スケジュール or 手動）
   └── SocReportOrchestrator (Agent / gpt-4.1)
         │
         ├── GetWeeklySignInTrend        ──▶ Sentinel KQL (SigninLogs)
-        │     今週 vs 先週の日別サインイン成功・失敗集計
+        │     今週の日別サインイン成功・失敗集計 + 先週同曜日との増減列
         │
         ├── GetAnomalousFailedSignIns    ──▶ Sentinel KQL (SigninLogs)
         │     統計的異常ユーザー検出（平均+2σ超過）
@@ -74,7 +74,7 @@ Security Copilot（週次スケジュール or 手動）
 
 | カテゴリ | スキル名 | データソース | 取得内容 |
 |---|---|---|---|
-| 傾向分析 | `GetWeeklySignInTrend` | Sentinel KQL | 今週/先週の日別サインイン成功・失敗集計 |
+| 傾向分析 | `GetWeeklySignInTrend` | Sentinel KQL | 今週の日別サインイン集計 + 先週同曜日との増減列（成功・失敗・失敗率） |
 | 異常検出 | `GetAnomalousFailedSignIns` | Sentinel KQL | 平均+2σ超過の異常失敗ユーザー検出 |
 | 失敗詳細 | `GetFailedSignInDetails` | Sentinel KQL | ユーザー/エラーコード/国/IP 別の失敗集計（上位100件） |
 | リスクサインイン | `GetRiskSignIns` | Sentinel KQL | リスク付きサインイン + 高リスクサインイン詳細 |
@@ -134,7 +134,7 @@ WeeklyEntraIdRiskUserAnalyticsReport/
 |---|---|
 | **ヘッダー** | タイトル・分析期間（過去7日間）・生成日時（JST） |
 | **セクション 1** | KPI サマリーカード ×4（今週失敗数＋先週比・異常検出ユーザー数・リスクユーザー数・高リスクサインイン数） |
-| **セクション 2** | **週次サインイン傾向分析**（今週 vs 先週の日別比較テーブル＋増減率＋傾向サマリー） |
+| **セクション 2** | **週次サインイン傾向分析**（今週7日分の日別テーブル＋先週同曜日との増減列＋失敗率変化＋傾向サマリー） |
 | **セクション 3** | **異常失敗ユーザー検出レポート**（UPN / 氏名 / 役職 / ロール / 失敗数 / エラーコード / 国 / IP） |
 | **セクション 4** | 全体傾向分析・危険ユーザー兆候レポート（事実ベース分析・推奨優先対応ユーザー一覧） |
 | **セクション 5** | リスクユーザー分布（リスクレベル別件数、色分け） |
