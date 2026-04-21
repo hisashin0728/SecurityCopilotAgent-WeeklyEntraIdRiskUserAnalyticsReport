@@ -85,11 +85,22 @@ Security Copilot の組み込みプラグイン **「Microsoft Entra」**（Skil
 
 ```
 WeeklyEntraIdRiskUserAnalyticsReport/
-├── WeeklyEntraIdRiskUserAnalyticsReport.yaml      # Security Copilot エージェントマニフェスト
+├── WeeklyEntraIdRiskUserAnalyticsReport.yaml      # エージェントマニフェスト（HTML メール通知版）
+├── WeeklyEntraIdRiskUserAnalyticsReport_md.yaml   # エージェントマニフェスト（Markdown 出力版）
 ├── WeeklyEntraIdRiskUserAnalyticsReport_ARM.json  # Outlook 送信用 Logic App ARM テンプレート
 ├── WeeklyEntraIdRiskUserAnalyticsReport.html      # Plugin Card（参照用）
 └── README.md
 ```
+
+### 2 つのバージョン
+
+| ファイル | 出力形式 | Logic App | 用途 |
+|---|---|---|---|
+| `WeeklyEntraIdRiskUserAnalyticsReport.yaml` | HTML メール | **必要**（ARM テンプレートのデプロイが必要） | SOC への Outlook メール自動通知 |
+| `WeeklyEntraIdRiskUserAnalyticsReport_md.yaml` | Markdown テキスト | 不要 | PowerAutomate 連携や手動実行でのレポート取得 |
+
+> **HTML メール通知を利用する場合**は、`WeeklyEntraIdRiskUserAnalyticsReport_ARM.json` で Logic App をデプロイする必要があります。  
+> Markdown 版のみ使用する場合は Logic App のデプロイは不要です。
 
 ---
 
@@ -207,9 +218,14 @@ WeeklyEntraIdRiskUserAnalyticsReport/
 
 ## セットアップ手順
 
-### ステップ 1 — Logic App のデプロイ
+### A. HTML メール通知版（`WeeklyEntraIdRiskUserAnalyticsReport.yaml`）
 
-ARM テンプレートをデプロイします。`emailAddress` パラメーターに **SOC のメールアドレス**を指定してください。
+HTML レポートを Outlook メールで SOC に自動送信する場合は、以下の手順で Logic App をデプロイしてください。
+
+#### ステップ A-1 — Logic App ARM テンプレートのデプロイ
+
+`WeeklyEntraIdRiskUserAnalyticsReport_ARM.json` を Azure にデプロイします。  
+`emailAddress` パラメーターに **SOC のメールアドレス**を指定してください。
 
 ```bash
 az deployment group create \
@@ -218,21 +234,21 @@ az deployment group create \
   --parameters emailAddress="soc-team@contoso.com"
 ```
 
-### ステップ 2 — Office 365 API 接続の認証
+#### ステップ A-2 — Office 365 API 接続の認証
 
-Azure ポータルで `office365` API 接続を開き、**Outlook アカウントでサインイン**して認証を完了します。
+デプロイ後、Azure ポータルで `office365` API 接続を開き、**Outlook アカウントでサインイン**して認証を完了します。
 
 ```
 Azure ポータル → リソースグループ → office365 (API 接続) → [接続の編集] → サインイン
 ```
 
-### ステップ 3 — Security Copilot へのアップロード
+#### ステップ A-3 — Security Copilot へのアップロード
 
 1. [Security Copilot ポータル](https://securitycopilot.microsoft.com) にアクセス
 2. 左メニュー **「プラグイン」** → **「カスタムプラグインをアップロード」**
 3. `WeeklyEntraIdRiskUserAnalyticsReport.yaml` を選択してアップロード
 
-### ステップ 4 — プラグイン設定
+#### ステップ A-4 — プラグイン設定
 
 インストール後、プラグインの設定画面で以下の 3 項目を入力します。
 
@@ -242,10 +258,19 @@ Azure ポータル → リソースグループ → office365 (API 接続) → [
 | **Logic App リソースグループ** | Logic App のリソースグループ名 | `rg-securitycopilot` |
 | **Logic App ワークフロー名** | デプロイした Logic App のワークフロー名 | `SocReportEmailLogicApp` |
 
-### ステップ 5 — 動作確認
+#### ステップ A-5 — 動作確認
 
 エージェントを有効化後、手動で実行して動作を確認します。  
 Security Copilot のエージェント画面から対象エージェントを選択し、**「今すぐ実行」** をクリックします。
+
+### B. Markdown 出力版（`WeeklyEntraIdRiskUserAnalyticsReport_md.yaml`）
+
+Logic App のデプロイは不要です。
+
+1. [Security Copilot ポータル](https://securitycopilot.microsoft.com) にアクセス
+2. 左メニュー **「プラグイン」** → **「カスタムプラグインをアップロード」**
+3. `WeeklyEntraIdRiskUserAnalyticsReport_md.yaml` を選択してアップロード
+4. PowerAutomate から呼び出すか、手動で実行して Markdown レポートを取得
 
 ---
 
@@ -269,13 +294,6 @@ Security Copilot のエージェント画面から対象エージェントを選
 | プラグイン設定項目が表示されない | YAML を再インストール（削除 → 再アップロード） |
 | `GetEntraData` でエラー | 本エージェントでは使用しません。`GetEntraSignInLogsV1` に統一済み |
 | `GetEntraRiskyUsers` で権限エラー | `IdentityRiskyUser.Read.All` 権限が未付与。エージェントはスキップしてサインインログのリスク情報で代替します |
-
----
-
-## Markdown レポート版
-
-HTML メール送信版に加え、**Markdown レポート版**（`WeeklyEntraIdRiskUserAnalyticsReport_md.yaml`）も提供しています。  
-PowerAutomate などの外部フローから呼び出し、Markdown テキストを出力するのみ（メール送信なし）です。
 
 ---
 
