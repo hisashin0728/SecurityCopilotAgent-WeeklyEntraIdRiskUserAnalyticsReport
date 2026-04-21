@@ -1,8 +1,8 @@
 # Weekly Entra ID RiskUser Analytics Report
 
 Microsoft Security Copilot 用カスタムエージェント。  
-Entra ID のサインインログおよび Entra ID P2 リスク情報をビルトインの **Entra プラグイン**から収集・分析し、視認性の高い HTML レポートを生成して **Outlook メール**で SOC に通知します。  
-週次スケジュール（毎週自動実行）または手動実行に対応しています。
+**Sentinel の SigninLogs テーブルを KQL で集計**し、先週比較の傾向分析と統計的異常ユーザー検出を含む SOC 向けレポートを生成して **Outlook メール**で通知します。  
+検出されたユーザーには **Entra ID プラグインで氏名・役職・ロール情報を付与**し、特権アカウントの侵害兆候を可視化します。
 
 ---
 
@@ -11,8 +11,8 @@ Entra ID のサインインログおよび Entra ID P2 リスク情報をビル�
 | 項目 | 内容 |
 |---|---|
 | **エージェント種別** | Standard Agent（スケジュール／手動トリガー型） |
-| **使用モデル** | gpt-4o |
-| **データソース** | Microsoft Entra ビルトインプラグイン（Sentinel 不要） |
+| **使用モデル** | gpt-4.1 |
+| **データソース** | Microsoft Sentinel（KQL）+ Entra ビルトインプラグイン |
 | **通知方法** | Azure Logic App → Office 365 Outlook |
 | **レポート形式** | HTML / CSS インラインスタイル（Meiryo フォント、メール互換） |
 | **実行間隔** | 週次（604800 秒）または手動 |
@@ -33,24 +33,33 @@ Entra ID のサインインログおよび Entra ID P2 リスク情報をビル�
 
 ```
 Security Copilot（週次スケジュール or 手動）
-  └── SocReportOrchestrator (Agent / gpt-4o)
+  └── SocReportOrchestrator (Agent / gpt-4.1)
         │
-        ├── GetEntraSignInLogsV1  ──▶ Entra プラグイン (Microsoft Graph)
-        │     成功サインイン（上位999件）→ エージェントが統計・時系列・国別を集計
-        │     失敗サインイン（上位999件）→ エージェントがエラー分析・集計
-        │     リスク付きサインイン（上位999件）→ リスクイベント種別集計
-        │     高リスクサインイン → ユーザー・アプリ・場所・IP 詳細
+        ├── GetWeeklySignInTrend        ──▶ Sentinel KQL (SigninLogs)
+        │     今週 vs 先週の日別サインイン成功・失敗集計
         │
-        ├── GetEntraRiskyUsers    ──▶ Entra プラグイン (Microsoft Graph)
+        ├── GetAnomalousFailedSignIns    ──▶ Sentinel KQL (SigninLogs)
+        │     統計的異常ユーザー検出（平均+2σ超過）
+        │
+        ├── GetEntraData                ──▶ Entra プラグイン (Microsoft Graph)
+        │     検出ユーザーの氏名・役職・部署・ディレクトリロール取得
+        │
+        ├── GetFailedSignInDetails      ──▶ Sentinel KQL (SigninLogs)
+        │     失敗サインイン詳細（ユーザー/エラーコード/国/IP 別集計）
+        │
+        ├── GetRiskSignIns              ──▶ Sentinel KQL (SigninLogs)
+        │     リスク付きサインイン＋高リスクサインイン詳細
+        │
+        ├── GetEntraRiskyUsers          ──▶ Entra プラグイン (Microsoft Graph)
         │     リスクユーザー一覧 (High / Medium / Low)
-        │     ※権限エラー時はスキップし、サインインログのリスク情報で代替
+        │     ※権限エラー時はスキップし KQL のリスク情報で代替
         │
         └── [HTML レポート生成]
-              ├── KPI カード ×4
-              ├── 全体傾向分析・危険ユーザー兆候レポート（事実ベース）
-              ├── 時系列・国別・リスク分布テーブル
-              ├── 失敗サインイン詳細テーブル（エラーコード日本語説明付き）
-              ├── リスクユーザー・高リスクサインイン一覧
+              ├── KPI カード ×4（先週比付き）
+              ├── 週次サインイン傾向分析（今週 vs 先週）
+              ├── 異常失敗ユーザー検出（氏名・役職・ロール付き）
+              ├── 全体傾向分析・危険ユーザー兆候レポート
+              ├── 失敗サインイン詳細・リスクイベント・リスクユーザー
               └── 推奨アクション（自動判定）
                     │
                     └── SendSocReportEmail
@@ -59,35 +68,19 @@ Security Copilot（週次スケジュール or 手動）
 
 ---
 
-## データソースについて — Sentinel 不使用・Entra プラグイン利用
+## データソース
 
-本エージェントは **Microsoft Sentinel の KQL スキルを一切使用しません**。  
-代わりに、Security Copilot に標準搭載されている **Microsoft Entra ビルトインプラグイン**のスキルを直接呼び出して Entra ID データを取得します。
+本エージェントは **Sentinel KQL** と **Entra プラグイン**のハイブリッド構成です。
 
-### なぜ Sentinel ではなく Entra プラグインを使うのか
-
-| 比較項目 | Sentinel KQL スキル | **Entra ビルトインプラグイン（本エージェント）** |
-|---|---|---|
-| **前提条件** | Sentinel ワークスペース + Entra サインインログの Log Analytics 転送設定が必要 | **不要**（Entra プラグインを Security Copilot で有効化するだけ） |
-| **データの鮮度** | Log Analytics への転送遅延（数分〜数十分）が発生する場合あり | Microsoft Graph API 経由でリアルタイムデータを取得 |
-| **コスト** | Sentinel ライセンス + Log Analytics データ取り込みコストが発生 | Security Copilot のライセンスのみ（追加コストなし） |
-| **セットアップ工数** | Sentinel ワークスペース構成・診断設定・テーブルスキーマの把握が必要 | プラグイン有効化のみ（設定 5 分以内） |
-| **Entra ID P2 リスクデータ** | `AADRiskyUsers` / `AADUserRiskEvents` テーブルへの転送設定が別途必要 | `GetEntraRiskyUsers` で直接取得可能 |
-
-### 使用する Entra プラグインスキル
-
-Security Copilot の組み込みプラグイン **「Microsoft Entra」**（SkillsetName: `Entra`）が提供する以下の 2 スキルを使用します。
-
-| スキル名 | 取得元（Microsoft Graph API） | 取得内容 |
-|---|---|---|
-| `GetEntraSignInLogsV1` | `/auditLogs/signIns` | サインインログ全般（成功・失敗・リスク付き・高リスク）。エージェントが集計・分析を実施 |
-| `GetEntraRiskyUsers` | `/identityProtection/riskyUsers` | リスクありユーザー一覧（High / Medium / Low・atRisk 状態）。権限エラー時はスキップ |
-
-> **注意**: `GetEntraData` は Graph API の `$count` 制約により多くのテナントで失敗するため使用しません。
-> 統計・集計はすべて `GetEntraSignInLogsV1` でログを取得し、エージェントが自身で算出します。
-
-> **有効化方法**: Security Copilot ポータル → 左メニュー「プラグイン」→「Microsoft Entra」をオンにするだけです。  
-> カスタム KQL クエリ・ワークスペース ID・接続文字列などの設定は不要です。
+| カテゴリ | スキル名 | データソース | 取得内容 |
+|---|---|---|---|
+| 傾向分析 | `GetWeeklySignInTrend` | Sentinel KQL | 今週/先週の日別サインイン成功・失敗集計 |
+| 異常検出 | `GetAnomalousFailedSignIns` | Sentinel KQL | 平均+2σ超過の異常失敗ユーザー検出 |
+| 失敗詳細 | `GetFailedSignInDetails` | Sentinel KQL | ユーザー/エラーコード/国/IP 別の失敗集計（上位100件） |
+| リスクサインイン | `GetRiskSignIns` | Sentinel KQL | リスク付きサインイン + 高リスクサインイン詳細 |
+| ユーザープロファイル | `GetEntraData` | Entra プラグイン | 検出ユーザーの氏名・役職・部署・ディレクトリロール |
+| リスクユーザー | `GetEntraRiskyUsers` | Entra プラグイン | リスクありユーザー一覧（High/Medium/Low） |
+| メール送信 | `SendSocReportEmail` | LogicApp | HTML レポートを Outlook メールで送信 |
 
 ---
 
@@ -95,8 +88,8 @@ Security Copilot の組み込みプラグイン **「Microsoft Entra」**（Skil
 
 ```
 WeeklyEntraIdRiskUserAnalyticsReport/
-├── WeeklyEntraIdRiskUserAnalyticsReport.yaml      # エージェントマニフェスト（HTML メール通知版）
-├── WeeklyEntraIdRiskUserAnalyticsReport_md.yaml   # エージェントマニフェスト（Markdown 出力版）
+├── WeeklyEntraIdRiskUserAnalyticsReport.yaml      # エージェントマニフェスト（HTML メール通知版・Sentinel KQL）
+├── WeeklyEntraIdRiskUserAnalyticsReport_md.yaml   # エージェントマニフェスト（Markdown 出力版・Entra プラグインのみ）
 ├── WeeklyEntraIdRiskUserAnalyticsReport_ARM.json  # Outlook 送信用 Logic App ARM テンプレート
 ├── WeeklyEntraIdRiskUserAnalyticsReport.html      # Plugin Card（参照用）
 └── README.md
@@ -104,36 +97,25 @@ WeeklyEntraIdRiskUserAnalyticsReport/
 
 ### 2 つのバージョン
 
-| ファイル | 出力形式 | Logic App | 用途 |
-|---|---|---|---|
-| `WeeklyEntraIdRiskUserAnalyticsReport.yaml` | HTML メール | **必要**（ARM テンプレートのデプロイが必要） | SOC への Outlook メール自動通知 |
-| `WeeklyEntraIdRiskUserAnalyticsReport_md.yaml` | Markdown テキスト | 不要 | PowerAutomate 連携や手動実行でのレポート取得 |
-
-> **HTML メール通知を利用する場合**は、`WeeklyEntraIdRiskUserAnalyticsReport_ARM.json` で Logic App をデプロイする必要があります。  
-> Markdown 版のみ使用する場合は Logic App のデプロイは不要です。
+| ファイル | データソース | 出力形式 | Logic App | 用途 |
+|---|---|---|---|---|
+| `WeeklyEntraIdRiskUserAnalyticsReport.yaml` | **Sentinel KQL** + Entra | HTML メール | **必要** | 先週比較・異常検出を含む SOC 通知 |
+| `WeeklyEntraIdRiskUserAnalyticsReport_md.yaml` | Entra プラグインのみ | Markdown テキスト | 不要 | Sentinel 不要の簡易版 |
 
 ---
 
-## スキル一覧
+## ワークフロー（8 Step）
 
-### Agent スキル
-
-| スキル名 | 役割 |
-|---|---|
-| `SocReportOrchestrator` | 全ワークフローのオーケストレーター。データ収集 → 分析 → HTML 生成 → メール送信を制御する |
-
-### 外部スキル（Entra ビルトインプラグイン）
-
-| スキル名 | SkillSet | 役割 |
-|---|---|---|
-| `GetEntraSignInLogsV1` | `Entra` | サインインログの取得・フィルタクエリ（成功・失敗・リスク付き・高リスク）。エージェントが統計・集計を実施 |
-| `GetEntraRiskyUsers` | `Entra` | リスクありユーザー一覧の取得（High / Medium / Low）。権限エラー時はスキップ |
-
-### LogicApp スキル
-
-| スキル名 | 役割 |
-|---|---|
-| `SendSocReportEmail` | HTML レポートを Outlook 経由で SOC に送信する |
+| Step | スキル | データソース | 内容 |
+|---|---|---|---|
+| 1 | `GetWeeklySignInTrend` | Sentinel KQL | 今週 vs 先週の日別サインイン集計 |
+| 2 | `GetAnomalousFailedSignIns` | Sentinel KQL | 統計的異常ユーザー検出 |
+| 3 | `GetEntraData` | Entra プラグイン | 検出ユーザーの氏名・役職・部署・ロール取得 |
+| 4 | `GetFailedSignInDetails` | Sentinel KQL | 失敗サインイン詳細集計 |
+| 5 | `GetRiskSignIns` | Sentinel KQL | リスクサインイン取得 |
+| 6 | `GetEntraRiskyUsers` | Entra プラグイン | リスクユーザー一覧（権限エラー時スキップ） |
+| 7 | エージェント | — | HTML レポート生成 |
+| 8 | `SendSocReportEmail` | LogicApp | Outlook メール送信 |
 
 ---
 
@@ -151,64 +133,30 @@ WeeklyEntraIdRiskUserAnalyticsReport/
 | セクション | 内容 |
 |---|---|
 | **ヘッダー** | タイトル・分析期間（過去7日間）・生成日時（JST） |
-| **セクション 1** | KPI サマリーカード ×4（総サインイン数・成功率・リスクユーザー数・高リスクサインイン数） |
-| **セクション 2** | **全体傾向分析・危険ユーザー兆候レポート**（事実ベース分析・推奨優先対応ユーザー一覧） |
-| **セクション 3** | 時系列サインイン（日付 / 成功数 / 失敗数） |
-| **セクション 4** | 国別サインイン分布（上位10カ国、海外ハイライト） |
+| **セクション 1** | KPI サマリーカード ×4（今週失敗数＋先週比・異常検出ユーザー数・リスクユーザー数・高リスクサインイン数） |
+| **セクション 2** | **週次サインイン傾向分析**（今週 vs 先週の日別比較テーブル＋増減率＋傾向サマリー） |
+| **セクション 3** | **異常失敗ユーザー検出レポート**（UPN / 氏名 / 役職 / ロール / 失敗数 / エラーコード / 国 / IP） |
+| **セクション 4** | 全体傾向分析・危険ユーザー兆候レポート（事実ベース分析・推奨優先対応ユーザー一覧） |
 | **セクション 5** | リスクユーザー分布（リスクレベル別件数、色分け） |
 | **セクション 6** | リスクイベント種別（イベント種別 / リスクレベル / 件数） |
-| **セクション 7** | 失敗サインイン詳細（ユーザー / エラーコード / **エラー理由** / 場所 / IP / 発生数） |
+| **セクション 7** | 失敗サインイン詳細（ユーザー / エラーコード / エラー理由 / 場所 / IP / 発生数） |
 | **セクション 8** | リスクユーザー一覧（UPN / リスクレベル / リスク状態 / 最終更新） |
 | **セクション 9** | 高リスクサインイン一覧（ユーザー / 日時 / アプリ / 国 / リスク詳細） |
 | **セクション 10** | 推奨アクション（データに基づき自動判定） |
 | **フッター** | 自動生成注記・エージェント名・日時 |
 
-### セクション 2「全体傾向分析・危険ユーザー兆候レポート」詳細
+### 異常検出のロジック
 
-取得したすべてのデータを事実ベースで分析し、以下の5つの脅威シグナルを判定します。
-
-| 判定項目 | 検出条件 |
+| 項目 | 内容 |
 |---|---|
-| **ブルートフォース兆候** | 同一ユーザーへ7日間で5件以上の失敗 / 同一 IP から複数ユーザーへの失敗 |
-| **異常アクセス元** | 日本国外からのサインイン / 地理的に不可能なログイン |
-| **MFA・CA 関連エラー** | エラーコード 50074・50076・50079・53003 等の反復発生 |
-| **アクティブリスクユーザー** | `atRisk` 状態の High・Medium リスクユーザー |
-| **高リスクサインイン** | Entra ID P2 判定による High リスクサインイン |
-
-判定結果は「**推奨優先対応ユーザー一覧**」テーブルに UPN・リスク種別・根拠・推奨対応の形でまとめられます。
-
-### API 設計上の注意
-
-本エージェントは `GetEntraData`（Graph API `/auditLogs/signIns/$count`）を**使用しません**。  
-多くのテナントで `ConsistencyLevel: eventual` ヘッダーの制約により `$count` 操作が失敗するためです。
-
-すべてのデータは `GetEntraSignInLogsV1` でサインインログを取得し、エージェントが自身で以下を集計します：
-- 成功数・失敗数・成功率
-- ユニークユーザー数・ユニークアプリ数
-- 日別時系列（成功/失敗）
-- 国別サインイン分布
-- リスクイベント種別・リスクレベル別集計
+| **検出基準** | 過去7日間の失敗サインイン数が全ユーザー平均 + 2標準偏差を超えるユーザー |
+| **出力情報** | UPN / 氏名 / 役職 / 部署 / ディレクトリロール / 失敗数 / 閾値 / エラーコード / IP / 国 |
+| **特権アカウント強調** | Global Admin、Security Admin 等のロールを持つユーザーは赤色ハイライト |
 
 ### エラーコード日本語説明
 
-セクション 7 の失敗サインイン詳細テーブルには、Entra ID サインインエラーコードの日本語説明（約100件対応）が自動付与されます。
-
-| 代表コード | 説明 |
-|---|---|
-| `50074` | MFA チャレンジが必要（Conditional Access による強力な認証要求） |
-| `50199` | ユーザー確認（セキュリティ確認）が必要（インタラクティブ操作が必要） |
-| `70044` | セッションが期限切れか、または条件付きアクセスポリシー変更によりトークンが無効化された |
-| `50053` | アカウントがロックされている（不正な ID またはパスワードで過多にサインインを試みた） |
-| `53003` | 条件付きアクセスポリシーによってアクセスがブロックされた |
-
-### 推奨アクションの自動判定ロジック
-
-| 条件 | 推奨アクション |
-|---|---|
-| High リスクユーザーが 1 名以上 | 即時パスワードリセットおよび MFA 強制を推奨 |
-| 失敗サインインが全体の 10% 超 | ブルートフォース攻撃の可能性を調査推奨 |
-| 海外からのサインインを検出 | Conditional Access の地理的制限を確認推奨 |
-| Medium/High リスクイベントが 5 件超 | Identity Protection ポリシーの強化を推奨 |
+失敗サインイン詳細テーブルでは、Microsoft 公式ドキュメントに基づくエラーコードの日本語説明を付与します。  
+公式リファレンス: https://learn.microsoft.com/ja-jp/entra/identity-platform/reference-error-codes
 
 ---
 
@@ -217,12 +165,11 @@ WeeklyEntraIdRiskUserAnalyticsReport/
 | 要件 | 詳細 |
 |---|---|
 | Microsoft Security Copilot | ライセンス済み・有効化済み |
+| Microsoft Sentinel | Entra サインインログが SigninLogs テーブルに取り込まれていること |
 | Microsoft Entra プラグイン | Security Copilot で有効化済み |
 | Entra ID P2 ライセンス | リスクユーザー・リスク検出機能に必要 |
 | Azure サブスクリプション | Logic App のデプロイ先 |
 | Office 365 ライセンス | Outlook 送信アカウント |
-
-> **Sentinel は不要です。** データソースは Microsoft Entra ビルトインプラグイン（Microsoft Graph API）を使用します。
 
 ---
 
@@ -230,12 +177,7 @@ WeeklyEntraIdRiskUserAnalyticsReport/
 
 ### A. HTML メール通知版（`WeeklyEntraIdRiskUserAnalyticsReport.yaml`）
 
-HTML レポートを Outlook メールで SOC に自動送信する場合は、以下の手順で Logic App をデプロイしてください。
-
 #### ステップ A-1 — Logic App ARM テンプレートのデプロイ
-
-`WeeklyEntraIdRiskUserAnalyticsReport_ARM.json` を Azure にデプロイします。  
-`emailAddress` パラメーターに **SOC のメールアドレス**を指定してください。
 
 ```bash
 az deployment group create \
@@ -245,8 +187,6 @@ az deployment group create \
 ```
 
 #### ステップ A-2 — Office 365 API 接続の認証
-
-デプロイ後、Azure ポータルで `office365` API 接続を開き、**Outlook アカウントでサインイン**して認証を完了します。
 
 ```
 Azure ポータル → リソースグループ → office365 (API 接続) → [接続の編集] → サインイン
@@ -260,27 +200,29 @@ Azure ポータル → リソースグループ → office365 (API 接続) → [
 
 #### ステップ A-4 — プラグイン設定
 
-インストール後、プラグインの設定画面で以下の 3 項目を入力します。
+インストール後、プラグインの設定画面で以下の **7 項目**を入力します。
 
 | 設定項目 | 内容 | 例 |
 |---|---|---|
-| **Logic App サブスクリプション ID** | Logic App がデプロイされている Azure サブスクリプション ID | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
+| **Logic App サブスクリプション ID** | Logic App の Azure サブスクリプション ID | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
 | **Logic App リソースグループ** | Logic App のリソースグループ名 | `rg-securitycopilot` |
-| **Logic App ワークフロー名** | デプロイした Logic App のワークフロー名 | `SocReportEmailLogicApp` |
+| **Logic App ワークフロー名** | Logic App のワークフロー名 | `SocReportEmailLogicApp` |
+| **Sentinel サブスクリプション ID** | Sentinel の Azure サブスクリプション ID | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
+| **Sentinel リソースグループ** | Sentinel ワークスペースのリソースグループ名 | `rg-sentinel` |
+| **Sentinel ワークスペース名** | Log Analytics ワークスペース名 | `law-sentinel` |
+| **Sentinel テナント ID** | Microsoft Entra テナント ID | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
 
 #### ステップ A-5 — 動作確認
 
-エージェントを有効化後、手動で実行して動作を確認します。  
 Security Copilot のエージェント画面から対象エージェントを選択し、**「今すぐ実行」** をクリックします。
 
 ### B. Markdown 出力版（`WeeklyEntraIdRiskUserAnalyticsReport_md.yaml`）
 
-Logic App のデプロイは不要です。
+Sentinel 不要・Logic App 不要の簡易版です。
 
 1. [Security Copilot ポータル](https://securitycopilot.microsoft.com) にアクセス
-2. 左メニュー **「プラグイン」** → **「カスタムプラグインをアップロード」**
-3. `WeeklyEntraIdRiskUserAnalyticsReport_md.yaml` を選択してアップロード
-4. PowerAutomate から呼び出すか、手動で実行して Markdown レポートを取得
+2. `WeeklyEntraIdRiskUserAnalyticsReport_md.yaml` をアップロード
+3. PowerAutomate から呼び出すか、手動で実行して Markdown レポートを取得
 
 ---
 
@@ -288,8 +230,6 @@ Logic App のデプロイは不要です。
 
 本エージェントは `DefaultPollPeriodSeconds: 604800`（7日間）で**週次自動実行**するよう設定されています。  
 初回有効化後、Security Copilot が自動的に週次スケジュールを開始します。
-
-手動実行はいつでも Security Copilot のエージェント管理画面から行えます。
 
 ---
 
@@ -299,11 +239,11 @@ Logic App のデプロイは不要です。
 |---|---|
 | Logic App がトリガーされない | プラグイン設定の Logic App 名・リソースグループ・サブスクリプション ID を確認 |
 | メールが届かない | Azure ポータルで `office365` API 接続の認証状態を確認 |
-| Entra データが取得できない | Security Copilot で「Entra」プラグインが有効化されているか確認 |
+| KQL スキルでエラー | Sentinel 設定（テナント ID・サブスクリプション ID・リソースグループ・ワークスペース名）を確認 |
+| SigninLogs テーブルにデータがない | Entra 管理センター → 監視 → 診断設定 で SigninLogs の Log Analytics 転送を確認 |
 | リスクユーザーが常に 0 件 | Entra ID P2 ライセンスが割り当てられているか確認 |
-| プラグイン設定項目が表示されない | YAML を再インストール（削除 → 再アップロード） |
-| `GetEntraData` でエラー | 本エージェントでは使用しません。`GetEntraSignInLogsV1` に統一済み |
-| `GetEntraRiskyUsers` で権限エラー | `IdentityRiskyUser.Read.All` 権限が未付与。エージェントはスキップしてサインインログのリスク情報で代替します |
+| `GetEntraRiskyUsers` で権限エラー | `IdentityRiskyUser.Read.All` 権限が未付与。エージェントはスキップして KQL のリスク情報で代替 |
+| `GetEntraData` でユーザー情報取得失敗 | エージェントはスキップして UPN のみでレポートを生成 |
 
 ---
 
@@ -318,4 +258,6 @@ MIT License
 - [Microsoft Security Copilot ドキュメント](https://learn.microsoft.com/ja-jp/copilot/security/)
 - [Security Copilot カスタムプラグイン](https://learn.microsoft.com/ja-jp/copilot/security/custom-plugins)
 - [Microsoft Entra ID Protection](https://learn.microsoft.com/ja-jp/entra/id-protection/)
+- [Microsoft Sentinel SigninLogs](https://learn.microsoft.com/ja-jp/azure/azure-monitor/reference/tables/signinlogs)
+- [Entra ID エラーコード](https://learn.microsoft.com/ja-jp/entra/identity-platform/reference-error-codes)
 - [Azure Logic Apps](https://learn.microsoft.com/ja-jp/azure/logic-apps/)
