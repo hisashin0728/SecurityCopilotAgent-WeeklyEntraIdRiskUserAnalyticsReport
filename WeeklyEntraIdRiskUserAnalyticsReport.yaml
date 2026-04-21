@@ -95,7 +95,7 @@ SkillGroups:
         Interfaces:
           - Agent
         Settings:
-          Model: gpt-4o
+          Model: gpt-4.1
           Instructions: |-
             # ミッション
             あなたは Entra ID のセキュリティ分析専門エージェントです。
