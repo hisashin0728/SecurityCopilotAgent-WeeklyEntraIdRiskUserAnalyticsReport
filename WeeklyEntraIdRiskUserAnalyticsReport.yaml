@@ -359,18 +359,19 @@ SkillGroups:
           - GetWeeklySignInTrend
           - GetAnomalousFailedSignIns
           - GetFailedSignInDetails
-          - GetRiskSignIns          - GetEntraData          - GetEntraRiskyUsers
+          - GetRiskSignIns
+          - GetEntraData
+          - GetEntraRiskyUsers
           - SendSocReportEmail
 
   # ── KQL Skills (Sentinel SigninLogs) ──────────────────────────────
   - Format: KQL
     Skills:
       - Name: GetWeeklySignInTrend
-        DisplayName: 週次サインイン傾向分析（今週 vs 先週）
+        DisplayName: 週次サインイン傾向分析（今週分 + 先週比較）
         Description: >-
-          Sentinel の SigninLogs テーブルから過去 14 日間のサインインを
-          今週（7日間）と先週（7日間）に分けて日別に成功・失敗数を集計し、
-          前週比の傾向を返す。
+          Sentinel の SigninLogs テーブルから今週（7日間）の日別サインイン
+          成功・失敗数を集計し、先週同曜日との比較（増減）を列に含めて返す。
         Settings:
           Target: Sentinel
           TenantId: "{{SentinelTenantId}}"
@@ -380,10 +381,8 @@ SkillGroups:
           Template: |-
             let thisWeekStart = startofday(ago(7d));
             let lastWeekStart = startofday(ago(14d));
-            let lastWeekEnd = startofday(ago(7d));
-            SigninLogs
-            | where TimeGenerated >= lastWeekStart
-            | extend Week = iff(TimeGenerated >= thisWeekStart, "ThisWeek", "LastWeek")
+            let thisWeek = SigninLogs
+            | where TimeGenerated >= thisWeekStart
             | extend Day = startofday(TimeGenerated)
             | extend IsSuccess = iff(ResultType == "0", true, false)
             | summarize
@@ -392,8 +391,41 @@ SkillGroups:
                 TotalCount = count(),
                 UniqueUsers = dcount(UserPrincipalName),
                 UniqueApps = dcount(AppDisplayName)
-              by Day, Week
-            | order by Week asc, Day asc
+              by Day;
+            let lastWeek = SigninLogs
+            | where TimeGenerated >= lastWeekStart and TimeGenerated < thisWeekStart
+            | extend Day = startofday(TimeGenerated)
+            | extend IsSuccess = iff(ResultType == "0", true, false)
+            | summarize
+                LW_SuccessCount = countif(IsSuccess),
+                LW_FailureCount = countif(not(IsSuccess)),
+                LW_TotalCount = count()
+              by Day;
+            thisWeek
+            | extend LW_Day = Day - 7d
+            | join kind=leftouter (lastWeek | project LW_Day = Day, LW_SuccessCount, LW_FailureCount, LW_TotalCount) on LW_Day
+            | extend
+                SuccessDelta = SuccessCount - coalesce(LW_SuccessCount, 0),
+                FailureDelta = FailureCount - coalesce(LW_FailureCount, 0),
+                TotalDelta = TotalCount - coalesce(LW_TotalCount, 0),
+                FailureRate = round(100.0 * FailureCount / TotalCount, 1),
+                LW_FailureRate = iff(coalesce(LW_TotalCount, 0) > 0, round(100.0 * coalesce(LW_FailureCount, 0) / LW_TotalCount, 1), real(0))
+            | extend FailureRateDelta = round(FailureRate - LW_FailureRate, 1)
+            | project
+                Day,
+                SuccessCount,
+                FailureCount,
+                TotalCount,
+                FailureRate,
+                UniqueUsers,
+                UniqueApps,
+                LW_SuccessCount = coalesce(LW_SuccessCount, 0),
+                LW_FailureCount = coalesce(LW_FailureCount, 0),
+                SuccessDelta,
+                FailureDelta,
+                TotalDelta,
+                FailureRateDelta
+            | order by Day asc
 
       - Name: GetAnomalousFailedSignIns
         DisplayName: 異常失敗サインインユーザー検出
