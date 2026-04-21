@@ -75,7 +75,6 @@ AgentDefinitions:
     RequiredSkillsets:
       - WeeklyEntraIdRiskUserAnalyticsReport
       - Entra
-      - Sentinel
     AgentSingleInstanceConstraint: Workspace
     Triggers:
       - Name: WeeklySchedule
@@ -110,9 +109,12 @@ SkillGroups:
               成功・失敗数を日別に集計し、前週比の傾向を分析する。
             - **GetAnomalousFailedSignIns** (KQL/Sentinel): SigninLogs テーブルから過去 7 日間の
               失敗サインインをユーザー別に集計し、統計的に異常なユーザーを検出する。
-            - **GetEntraSignInLogsV1** (Entra プラグイン): 失敗サインインの詳細ログを取得する。
+            - **GetFailedSignInDetails** (KQL/Sentinel): SigninLogs テーブルから過去 7 日間の
+              失敗サインインをユーザー・エラーコード・国・IP 別に集計して返す。
+            - **GetRiskSignIns** (KQL/Sentinel): SigninLogs テーブルから過去 7 日間の
+              リスク付きサインイン（none 以外）と高リスクサインインを取得する。
             - **GetEntraRiskyUsers** (Entra プラグイン): Entra ID P2 のリスクありユーザー一覧の取得に使用する。
-              権限エラーで失敗した場合はスキップし、サインインログのリスク情報で代替する。
+              権限エラーで失敗した場合はスキップし、KQL のリスク情報で代替する。
 
             # ワークフロー
 
@@ -130,29 +132,25 @@ SkillGroups:
             このスキルは Sentinel の SigninLogs テーブルから過去 7 日間の失敗サインインを
             ユーザー別に集計し、統計的に異常な失敗パターンを持つユーザーを返す。
             異常検出の基準：失敗数が全ユーザー平均 + 2標準偏差を超えるユーザー。
-            結果にはユーザー名・失敗数・エラーコード分布・アクセス元国・IP が含まれる。
 
-            ## Step 3: 失敗サインイン詳細の取得
-            GetEntraSignInLogsV1 を使い「過去 7 日間の失敗サインインを
-            ユーザー・エラーコード・場所・IPアドレス・日時を含めて上位 999 件取得して」と問い合わせる。
+            ## Step 3: 失敗サインイン詳細の取得（KQL）
+            GetFailedSignInDetails を呼び出す。
+            このスキルは Sentinel の SigninLogs テーブルから過去 7 日間の失敗サインインを
+            ユーザー・エラーコード・国・IP 別に集計して返す。
 
-            ## Step 4: リスクユーザーの取得
+            ## Step 4: リスクサインインの取得（KQL）
+            GetRiskSignIns を呼び出す。
+            このスキルは Sentinel の SigninLogs テーブルから過去 7 日間の
+            リスク付きサインイン（none 以外）を取得し、
+            リスクイベント種別・リスクレベル別の集計および高リスクサインイン詳細を取得する。
+
+            ## Step 5: リスクユーザーの取得
             GetEntraRiskyUsers を使い「現在リスク状態にある全ユーザーの一覧を
             リスクレベル・リスク状態・詳細とともに返して」と問い合わせる。
-            **このスキルが権限エラーで失敗した場合**: スキップし、Step 6 の高リスク
-            サインイン情報をリスクユーザーの代替情報として使用する。
+            **このスキルが権限エラーで失敗した場合**: スキップし、Step 4 の
+            リスクサインイン情報をリスクユーザーの代替情報として使用する。
 
-            ## Step 5: リスクイベントの取得
-            GetEntraSignInLogsV1 を使い「過去 7 日間のリスクレベルが none 以外の
-            サインインをユーザー・リスクレベル・リスク詳細・場所・IPアドレスと共に
-            上位 999 件取得して」と問い合わせる。
-            取得したレコードからリスクイベント種別・リスクレベル別に自分で集計する。
-
-            ## Step 6: 高リスクサインインの取得
-            GetEntraSignInLogsV1 を使い「過去 7 日間のリスクレベルが High の
-            サインインをユーザー・アプリ・場所・IPアドレスと共に返して」と問い合わせる。
-
-            ## Step 7: HTML レポートの生成
+            ## Step 6: HTML レポートの生成
             収集・分析したすべてのデータを統合し、以下の構造でメール送信に適した
             HTML+CSS レポートを生成する。
 
@@ -316,7 +314,7 @@ SkillGroups:
             - パディング: セクション間 20px、セル内 8px 12px
             - 全スタイルをインライン (style 属性) で適用すること
 
-            ## Step 8: メール送信
+            ## Step 7: メール送信
             生成した HTML 全文を SendSocReportEmail の ReportHtml パラメータに渡して送信する。
 
             - HTML の生成が完了したら、必ずそのまま直ちに SendSocReportEmail を呼び出すこと。
@@ -333,7 +331,8 @@ SkillGroups:
         ChildSkills:
           - GetWeeklySignInTrend
           - GetAnomalousFailedSignIns
-          - GetEntraSignInLogsV1
+          - GetFailedSignInDetails
+          - GetRiskSignIns
           - GetEntraRiskyUsers
           - SendSocReportEmail
 
@@ -423,6 +422,64 @@ SkillGroups:
                 FirstSeen,
                 LastSeen
             | order by FailureCount desc
+
+      - Name: GetFailedSignInDetails
+        DisplayName: 失敗サインイン詳細集計
+        Description: >-
+          Sentinel の SigninLogs テーブルから過去 7 日間の失敗サインインを
+          ユーザー・エラーコード・国・IP 別に集計して上位 100 件を返す。
+        Settings:
+          Target: Sentinel
+          TenantId: "{{SentinelTenantId}}"
+          SubscriptionId: "{{SentinelSubscriptionId}}"
+          ResourceGroupName: "{{SentinelResourceGroup}}"
+          WorkspaceName: "{{SentinelWorkspaceName}}"
+          Template: |-
+            SigninLogs
+            | where TimeGenerated >= ago(7d)
+            | where ResultType != "0"
+            | extend Country = tostring(LocationDetails.countryOrRegion)
+            | summarize
+                FailureCount = count(),
+                DistinctIPs = dcount(IPAddress),
+                SampleIP = take_any(IPAddress),
+                FirstSeen = min(TimeGenerated),
+                LastSeen = max(TimeGenerated)
+              by UserPrincipalName, ResultType, Country
+            | order by FailureCount desc
+            | take 100
+
+      - Name: GetRiskSignIns
+        DisplayName: リスクサインイン取得（リスクイベント＋高リスク詳細）
+        Description: >-
+          Sentinel の SigninLogs テーブルから過去 7 日間のリスク付きサインイン
+          （RiskLevelDuringSignIn が none 以外）を取得し、
+          リスクイベント種別集計と高リスクサインイン詳細を返す。
+        Settings:
+          Target: Sentinel
+          TenantId: "{{SentinelTenantId}}"
+          SubscriptionId: "{{SentinelSubscriptionId}}"
+          ResourceGroupName: "{{SentinelResourceGroup}}"
+          WorkspaceName: "{{SentinelWorkspaceName}}"
+          Template: |-
+            SigninLogs
+            | where TimeGenerated >= ago(7d)
+            | where RiskLevelDuringSignIn != "none" and isnotempty(RiskLevelDuringSignIn)
+            | extend
+                Country = tostring(LocationDetails.countryOrRegion),
+                RiskLevel = tostring(RiskLevelDuringSignIn),
+                RiskDetail = tostring(RiskDetail)
+            | project
+                TimeGenerated,
+                UserPrincipalName,
+                AppDisplayName,
+                RiskLevel,
+                RiskDetail,
+                Country,
+                IPAddress,
+                ResultType
+            | order by RiskLevel asc, TimeGenerated desc
+            | take 200
 
   # ── LogicApp Skill (Outlook 通知) ────────────────────────────────
   - Format: LogicApp
