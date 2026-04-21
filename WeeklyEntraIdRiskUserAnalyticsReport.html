@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Entra ID CISO Report Agent — Plugin Card</title>
+  <style>
+    :root {
+      --primary: #0078D4; --primary-dark: #005A9E; --accent: #50E6FF;
+      --bg: #F5F5F5; --card-bg: #FFFFFF; --text: #323130;
+      --text-secondary: #605E5C; --border: #E1DFDD;
+      --badge-kql: #0E7A0D; --badge-logicapp: #0072C6;
+      --badge-agent: #107C10;
+      --shadow: 0 2px 8px rgba(0,0,0,0.08); --radius: 8px;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Segoe UI',sans-serif; background:var(--bg);
+           color:var(--text); line-height:1.6; padding:32px; }
+    .container { max-width:960px; margin:0 auto; }
+
+    /* Header */
+    .plugin-header {
+      background:linear-gradient(135deg,var(--primary) 0%,var(--primary-dark) 100%);
+      color:white; padding:32px 40px; border-radius:8px 8px 0 0;
+    }
+    .plugin-header .type-label {
+      display:inline-block; background:rgba(255,255,255,.2);
+      padding:4px 14px; border-radius:20px; font-size:12px; font-weight:600;
+      text-transform:uppercase; letter-spacing:1px; margin-bottom:12px;
+    }
+    .plugin-header h1 { font-size:28px; font-weight:700; margin-bottom:4px; }
+    .plugin-header .internal-name {
+      font-size:13px; opacity:.75; font-family:monospace; margin-bottom:12px;
+    }
+    .plugin-header .description { font-size:15px; opacity:.9; max-width:700px; }
+
+    /* Meta bar */
+    .meta-bar {
+      background:var(--card-bg); border:1px solid var(--border);
+      border-top:none; padding:16px 40px; display:flex; gap:32px; flex-wrap:wrap;
+    }
+    .meta-item {
+      display:flex; align-items:center; gap:8px;
+      font-size:13px; color:var(--text-secondary);
+    }
+    .meta-item strong { color:var(--text); }
+
+    /* Content */
+    .content {
+      background:var(--card-bg); border:1px solid var(--border);
+      border-top:none; border-radius:0 0 8px 8px; padding:32px 40px;
+    }
+    .section-title {
+      font-size:18px; font-weight:700; color:var(--primary);
+      margin-bottom:16px; padding-bottom:8px;
+      border-bottom:2px solid var(--primary);
+    }
+    .skill-group { margin-bottom:28px; }
+    .format-badge {
+      display:inline-block; padding:4px 12px; border-radius:4px;
+      font-size:12px; font-weight:700; color:white; text-transform:uppercase;
+    }
+    .format-kql      { background:var(--badge-kql); }
+    .format-logicapp { background:var(--badge-logicapp); }
+    .format-agent    { background:var(--badge-agent); }
+
+    .skill-card {
+      background:var(--bg); border:1px solid var(--border);
+      border-radius:8px; padding:16px 20px; margin-bottom:10px;
+    }
+    .skill-name { font-size:15px; font-weight:600; }
+    .skill-internal {
+      font-size:12px; color:var(--text-secondary);
+      font-family:monospace; margin-bottom:6px;
+    }
+    .skill-desc { font-size:13px; color:var(--text-secondary); margin-bottom:10px; }
+
+    /* Prompts */
+    .prompt-item {
+      background:var(--bg); border:1px solid var(--border);
+      border-left:3px solid var(--accent);
+      border-radius:0 8px 8px 0; padding:10px 16px;
+      margin-bottom:8px; font-size:14px;
+    }
+    .prompt-item.starter { border-left-color:var(--primary); }
+    .prompt-label {
+      font-size:11px; font-weight:600; text-transform:uppercase;
+      color:var(--text-secondary); margin-bottom:2px;
+    }
+
+    /* Child skill tags */
+    .child-skill-tag {
+      background:#E8F0FE; color:var(--primary-dark);
+      padding:4px 12px; border-radius:16px; font-size:13px;
+      font-family:monospace; border:1px solid #C7DDFB;
+      display:inline-block; margin:4px;
+    }
+
+    /* Agent info grid */
+    .agent-info-grid {
+      display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px;
+    }
+    .agent-info-item {
+      background:var(--bg); border:1px solid var(--border);
+      border-radius:8px; padding:14px 18px;
+    }
+    .agent-info-item .label {
+      font-size:11px; text-transform:uppercase; letter-spacing:.5px;
+      color:var(--text-secondary); font-weight:600; margin-bottom:4px;
+    }
+    .agent-info-item .value { font-size:14px; font-weight:500; }
+
+    /* Param table */
+    .param-table {
+      width:100%; border-collapse:collapse; font-size:13px; margin-top:8px;
+    }
+    .param-table th {
+      text-align:left; padding:6px 10px; font-size:11px;
+      text-transform:uppercase; color:#605E5C;
+      border-bottom:2px solid #E1DFDD;
+    }
+    .param-table td { padding:6px 10px; border-bottom:1px solid #E1DFDD; }
+    .param-name { font-family:monospace; color:#005A9E; }
+    .required-mark { color:#D13438; font-weight:700; }
+
+    /* Architecture */
+    .arch-block {
+      background:#1E1E1E; color:#D4D4D4; border-radius:8px;
+      padding:20px 24px; font-family:'Courier New',monospace;
+      font-size:13px; line-height:1.8; overflow-x:auto;
+    }
+
+    /* Footer */
+    .card-footer {
+      text-align:center; padding:20px;
+      font-size:12px; color:var(--text-secondary);
+    }
+    .card-footer a { color:var(--primary); }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="plugin-header">
+    <div class="type-label">Agent (Interactive) + KQL + LogicApp</div>
+    <h1>Entra ID CISO Report Agent</h1>
+    <div class="internal-name">EntraIdCisoReportAgent</div>
+    <div class="description">
+      Entra ID のサインインログおよび Entra ID P2 のリスク情報を収集・分析し、
+      CISO 向けに視認性の高い HTML/CSS レポート（Chart.js グラフ付き）を生成して
+      Outlook メールで通知するインタラクティブエージェントです。
+    </div>
+  </div>
+
+  <!-- Meta bar -->
+  <div class="meta-bar">
+    <div class="meta-item"><span>⚙️</span> Skills: <strong>9</strong></div>
+    <div class="meta-item"><span>📦</span> Skill Groups: <strong>3</strong></div>
+    <div class="meta-item"><span>📐</span> Formats: <strong>Agent, KQL, LogicApp</strong></div>
+    <div class="meta-item"><span>🤖</span> Model: <strong>gpt-4.1</strong></div>
+    <div class="meta-item"><span>📊</span> Data Sources: <strong>SigninLogs, AADRiskyUsers, AADUserRiskEvents</strong></div>
+    <div class="meta-item"><span>📧</span> Notification: <strong>Outlook (Office 365)</strong></div>
+  </div>
+
+  <!-- Content -->
+  <div class="content">
+
+    <div class="section-title">⚡ Skills</div>
+
+    <!-- Agent -->
+    <div class="skill-group">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <span class="format-badge format-agent">Agent</span>
+        <span style="font-size:13px;color:var(--text-secondary)">1 skill — オーケストレーター</span>
+      </div>
+      <div class="skill-card">
+        <div class="skill-name">CISO レポートオーケストレーター</div>
+        <div class="skill-internal">CisoReportOrchestrator</div>
+        <div class="skill-desc">
+          サインイン・リスク情報を収集し、HTML レポートを生成して
+          Outlook で CISO に送信するインタラクティブエージェント。
+          全 Child Skill を制御し、推奨アクションを自動判定する。
+        </div>
+      </div>
+    </div>
+
+    <!-- KQL -->
+    <div class="skill-group">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <span class="format-badge format-kql">KQL</span>
+        <span style="font-size:13px;color:var(--text-secondary)">7 skills — Sentinel データ取得</span>
+      </div>
+      <div class="skill-card">
+        <div class="skill-name">サインイン統計サマリー取得</div>
+        <div class="skill-internal">GetSignInSummary</div>
+        <div class="skill-desc">指定期間の成功・失敗件数・成功率・ユニークユーザー数を集計。KPI カード用。</div>
+      </div>
+      <div class="skill-card">
+        <div class="skill-name">失敗サインイン詳細取得</div>
+        <div class="skill-internal">GetFailedSignIns</div>
+        <div class="skill-desc">失敗サインインをユーザー・エラーコード・国・IP 別に集計（上位 50 件）。詳細テーブル用。</div>
+      </div>
+      <div class="skill-card">
+        <div class="skill-name">サインイン時系列データ取得</div>
+        <div class="skill-internal">GetSignInTimeSeries</div>
+        <div class="skill-desc">過去 7 日間の日次成功・失敗数の時系列。Chart.js 折れ線グラフ用。</div>
+      </div>
+      <div class="skill-card">
+        <div class="skill-name">国別サインイン分布取得</div>
+        <div class="skill-internal">GetSignInByCountry</div>
+        <div class="skill-desc">国別サインイン数（上位 10 カ国）。Chart.js 棒グラフ用。</div>
+      </div>
+      <div class="skill-card">
+        <div class="skill-name">リスクユーザー一覧取得</div>
+        <div class="skill-internal">GetRiskyUsers</div>
+        <div class="skill-desc">Entra ID P2 の atRisk/confirmedCompromised ユーザー一覧。ドーナツグラフ＋テーブル用。</div>
+      </div>
+      <div class="skill-card">
+        <div class="skill-name">リスクイベント種別集計取得</div>
+        <div class="skill-internal">GetRiskEvents</div>
+        <div class="skill-desc">AADUserRiskEvents の種類別・レベル別集計（上位 30 件）。Chart.js 横棒グラフ用。</div>
+      </div>
+      <div class="skill-card">
+        <div class="skill-name">高リスクサインイン取得</div>
+        <div class="skill-internal">GetHighRiskSignIns</div>
+        <div class="skill-desc">RiskLevelDuringSignIn/RiskLevelAggregated が high のサインイン（上位 30 件）。テーブル用。</div>
+      </div>
+    </div>
+
+    <!-- LogicApp -->
+    <div class="skill-group">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <span class="format-badge format-logicapp">LogicApp</span>
+        <span style="font-size:13px;color:var(--text-secondary)">1 skill — Outlook 通知</span>
+      </div>
+      <div class="skill-card">
+        <div class="skill-name">CISO レポートメール送信</div>
+        <div class="skill-internal">SendCisoReportEmail</div>
+        <div class="skill-desc">HTML レポートを Outlook 経由で CISO に送信する。</div>
+        <table class="param-table">
+          <thead><tr>
+            <th>Parameter</th><th>Description</th><th>Required</th>
+          </tr></thead>
+          <tbody>
+            <tr>
+              <td class="param-name">subject<span class="required-mark">*</span></td>
+              <td>メールの件名</td><td>Yes</td>
+            </tr>
+            <tr>
+              <td class="param-name">htmlBody<span class="required-mark">*</span></td>
+              <td>HTML レポート本文（Chart.js グラフ埋め込み済み）</td><td>Yes</td>
+            </tr>
+            <tr>
+              <td class="param-name">toAddress<span class="required-mark">*</span></td>
+              <td>CISO の送信先メールアドレス</td><td>Yes</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Agent Configuration -->
+    <div style="margin-top:28px;">
+      <div class="section-title">🤖 Agent Configuration</div>
+      <div class="agent-info-grid">
+        <div class="agent-info-item">
+          <div class="label">Agent Name</div>
+          <div class="value">Entra ID CISO Report Agent</div>
+        </div>
+        <div class="agent-info-item">
+          <div class="label">Internal Name</div>
+          <div class="value">EntraIdCisoReportAgent</div>
+        </div>
+        <div class="agent-info-item">
+          <div class="label">Publisher</div>
+          <div class="value">SecurityTeam</div>
+        </div>
+        <div class="agent-info-item">
+          <div class="label">Model</div>
+          <div class="value">gpt-4.1</div>
+        </div>
+        <div class="agent-info-item">
+          <div class="label">Instance Constraint</div>
+          <div class="value">None</div>
+        </div>
+        <div class="agent-info-item">
+          <div class="label">Poll Period</div>
+          <div class="value">0s（手動トリガーのみ）</div>
+        </div>
+        <div class="agent-info-item">
+          <div class="label">Process Skill</div>
+          <div class="value">EntraIdCisoReportAgent.CisoReportOrchestrator</div>
+        </div>
+        <div class="agent-info-item">
+          <div class="label">Prompt Skill</div>
+          <div class="value">EntraIdCisoReportAgent.CisoReportOrchestrator</div>
+        </div>
+      </div>
+
+      <h4 style="font-size:14px;color:#605E5C;margin-bottom:8px;">Child Skills</h4>
+      <div>
+        <span class="child-skill-tag">GetSignInSummary</span>
+        <span class="child-skill-tag">GetFailedSignIns</span>
+        <span class="child-skill-tag">GetSignInTimeSeries</span>
+        <span class="child-skill-tag">GetSignInByCountry</span>
+        <span class="child-skill-tag">GetRiskyUsers</span>
+        <span class="child-skill-tag">GetRiskEvents</span>
+        <span class="child-skill-tag">GetHighRiskSignIns</span>
+        <span class="child-skill-tag">SendCisoReportEmail</span>
+      </div>
+
+      <h4 style="font-size:14px;color:#605E5C;margin:20px 0 8px;">Suggested Prompts</h4>
+      <div class="prompt-item starter">
+        <div class="prompt-label">Starter Prompt</div>
+        過去 7 日間の Entra ID サインインとリスク情報をまとめて CISO レポートを作成し、メールで送信してください。
+      </div>
+      <div class="prompt-item starter">
+        <div class="prompt-label">Starter Prompt</div>
+        過去 30 日間のリスクユーザーとサインイン失敗の傾向を分析して CISO レポートを送付してください。
+      </div>
+      <div class="prompt-item starter">
+        <div class="prompt-label">Starter Prompt</div>
+        高リスクユーザーだけに絞ったサマリーレポートを作成してください。
+      </div>
+      <div class="prompt-item">
+        <div class="prompt-label">Follow-up</div>
+        直近 24 時間のサインイン失敗をグラフ化してレポートしてください。
+      </div>
+      <div class="prompt-item">
+        <div class="prompt-label">Follow-up</div>
+        リスクイベントの種類別内訳を表示してください。
+      </div>
+      <div class="prompt-item">
+        <div class="prompt-label">Follow-up</div>
+        国別サインイン分布を分析してください。
+      </div>
+      <div class="prompt-item">
+        <div class="prompt-label">Follow-up</div>
+        レポートを再生成して再送信してください。
+      </div>
+    </div>
+
+    <!-- HTML Report Spec -->
+    <div style="margin-top:32px;">
+      <div class="section-title">📊 生成 HTML レポート仕様</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="agent-info-item">
+          <div class="label">フォント</div>
+          <div class="value">Meiryo, "メイリオ", sans-serif</div>
+        </div>
+        <div class="agent-info-item">
+          <div class="label">プライマリカラー</div>
+          <div class="value">#0078D4（Microsoft ブランド）</div>
+        </div>
+        <div class="agent-info-item">
+          <div class="label">グラフライブラリ</div>
+          <div class="value">Chart.js（CDN）</div>
+        </div>
+        <div class="agent-info-item">
+          <div class="label">グラフ種別</div>
+          <div class="value">折れ線・ドーナツ・横棒・棒（計 4 グラフ）</div>
+        </div>
+        <div class="agent-info-item">
+          <div class="label">KPI カード</div>
+          <div class="value">4 枚（総サインイン・成功率・リスクユーザー・高リスクサインイン）</div>
+        </div>
+        <div class="agent-info-item">
+          <div class="label">詳細テーブル</div>
+          <div class="value">3 テーブル（失敗サインイン・リスクユーザー・高リスクサインイン）</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Architecture -->
+    <div style="margin-top:32px;">
+      <div class="section-title">🏗️ Architecture</div>
+      <div class="arch-block">
+CISO
+  │  「週次レポートを送信して」
+  ▼
+Security Copilot
+  └── EntraIdCisoReportAgent (Interactive Agent / gpt-4.1)
+        ├── GetSignInSummary      ──▶ Sentinel: SigninLogs
+        ├── GetFailedSignIns      ──▶ Sentinel: SigninLogs
+        ├── GetSignInTimeSeries   ──▶ Sentinel: SigninLogs
+        ├── GetSignInByCountry    ──▶ Sentinel: SigninLogs
+        ├── GetRiskyUsers         ──▶ Sentinel: AADRiskyUsers
+        ├── GetRiskEvents         ──▶ Sentinel: AADUserRiskEvents
+        ├── GetHighRiskSignIns    ──▶ Sentinel: SigninLogs
+        │
+        └── [HTML レポート生成]
+              ├── Chart.js グラフ ×4
+              ├── KPI カード ×4
+              ├── 詳細テーブル ×3
+              └── 推奨アクション（自動判定）
+                    │
+                    └── SendCisoReportEmail ──▶ Logic App ──▶ Outlook ──▶ CISO
+      </div>
+    </div>
+
+    <!-- Setup -->
+    <div style="margin-top:32px;">
+      <div class="section-title">🚀 セットアップ手順</div>
+      <ol style="font-size:14px;line-height:2;padding-left:20px;color:var(--text-secondary);">
+        <li><strong style="color:var(--text);">Logic App デプロイ</strong> — CisoReportEmailLogicApp_ARM.json を az deployment group create でデプロイ</li>
+        <li><strong style="color:var(--text);">Office 365 接続認証</strong> — Azure ポータルで office365 API 接続を Outlook アカウントで認証</li>
+        <li><strong style="color:var(--text);">YAML プレースホルダー置換</strong> — &lt;YOUR-TENANT-ID&gt; 等を実際の値に変更</li>
+        <li><strong style="color:var(--text);">YAML アップロード</strong> — Security Copilot → プラグイン管理 → カスタムプラグインをアップロード</li>
+        <li><strong style="color:var(--text);">エージェント有効化</strong> — アクティブエージェントを設定でエージェントを有効化</li>
+      </ol>
+    </div>
+
+  </div>
+
+  <div class="card-footer">
+    Generated by <strong>Security Copilot Custom Plugins Builder</strong>
+    &nbsp;|&nbsp;
+    <a href="https://learn.microsoft.com/en-us/copilot/security/custom-plugins" target="_blank">Docs</a>
+    &nbsp;|&nbsp; 2026-03-30
+  </div>
+
+</div>
+</body>
+</html>
