@@ -109,6 +109,9 @@ SkillGroups:
               成功・失敗数を日別に集計し、前週比の傾向を分析する。
             - **GetAnomalousFailedSignIns** (KQL/Sentinel): SigninLogs テーブルから過去 7 日間の
               失敗サインインをユーザー別に集計し、統計的に異常なユーザーを検出する。
+            - **GetEntraData** (Entra プラグイン): KQL で検出されたユーザーのプロフィール情報
+              （氏名・役職・アサインされたロール）を Microsoft Graph 経由で取得する。
+              ユーザープロフィールの取得専用であり、サインインログの取得には使用しない。
             - **GetFailedSignInDetails** (KQL/Sentinel): SigninLogs テーブルから過去 7 日間の
               失敗サインインをユーザー・エラーコード・国・IP 別に集計して返す。
             - **GetRiskSignIns** (KQL/Sentinel): SigninLogs テーブルから過去 7 日間の
@@ -132,25 +135,37 @@ SkillGroups:
             このスキルは Sentinel の SigninLogs テーブルから過去 7 日間の失敗サインインを
             ユーザー別に集計し、統計的に異常な失敗パターンを持つユーザーを返す。
             異常検出の基準：失敗数が全ユーザー平均 + 2標準偏差を超えるユーザー。
+            **検出されたユーザーの UPN 一覧を記憶しておく。Step 3 でプロフィール情報を取得する。**
 
-            ## Step 3: 失敗サインイン詳細の取得（KQL）
+            ## Step 3: 検出ユーザーのプロフィール情報取得
+            Step 2 で検出された異常ユーザー、および Step 5 以降で取得されるリスクユーザーの
+            プロフィール情報を GetEntraData で取得する。
+            GetEntraData に以下のように問い合わせる：
+            「以下のユーザーの氏名（displayName）、役職（jobTitle）、部署（department）、
+            アサインされたディレクトリロール（directory roles）を取得して：
+            {Step 2 で検出されたユーザーの UPN 一覧}」
+            **このスキルが失敗した場合**: スキップし、UPN のみでレポートを生成する。
+
+            ## Step 4: 失敗サインイン詳細の取得（KQL）
             GetFailedSignInDetails を呼び出す。
             このスキルは Sentinel の SigninLogs テーブルから過去 7 日間の失敗サインインを
             ユーザー・エラーコード・国・IP 別に集計して返す。
 
-            ## Step 4: リスクサインインの取得（KQL）
+            ## Step 5: リスクサインインの取得（KQL）
             GetRiskSignIns を呼び出す。
             このスキルは Sentinel の SigninLogs テーブルから過去 7 日間の
             リスク付きサインイン（none 以外）を取得し、
             リスクイベント種別・リスクレベル別の集計および高リスクサインイン詳細を取得する。
 
-            ## Step 5: リスクユーザーの取得
+            ## Step 6: リスクユーザーの取得
             GetEntraRiskyUsers を使い「現在リスク状態にある全ユーザーの一覧を
             リスクレベル・リスク状態・詳細とともに返して」と問い合わせる。
-            **このスキルが権限エラーで失敗した場合**: スキップし、Step 4 の
+            **このスキルが権限エラーで失敗した場合**: スキップし、Step 5 の
             リスクサインイン情報をリスクユーザーの代替情報として使用する。
+            **リスクユーザーが検出された場合**: Step 3 でまだプロフィールを取得していない
+            ユーザーがいれば、GetEntraData で追加取得する。
 
-            ## Step 6: HTML レポートの生成
+            ## Step 7: HTML レポートの生成
             収集・分析したすべてのデータを統合し、以下の構造でメール送信に適した
             HTML+CSS レポートを生成する。
 
@@ -189,9 +204,10 @@ SkillGroups:
             - 傾向分析のサマリー（2〜3文）
 
             ### セクション3: 異常失敗ユーザー検出レポート
-            GetAnomalousFailedSignIns の結果を使い、以下をテーブルと分析文で記載する。
-            - 異常検出されたユーザー一覧（UPN / 失敗数 / 主なエラーコード / アクセス元国 / IP）
+            GetAnomalousFailedSignIns と GetEntraData（プロフィール）の結果を統合し、以下を記載する。
+            - 異常検出されたユーザー一覧（UPN / 氏名 / 役職 / 部署 / ロール / 失敗数 / 主なエラーコード / アクセス元国 / IP）
             - 異常検出基準（平均 + 2σの閾値）を表示
+            - 役職・ロールが特権アカウント（Global Admin、Security Admin 等）の場合は赤色で強調
             - 各ユーザーのリスク評価と推奨対応
 
             ### セクション4: 全体傾向分析・危険ユーザー兆候レポート
@@ -225,7 +241,7 @@ SkillGroups:
             - High・Medium リスクユーザーは特に強調すること
 
             **【要注意】高リスクサインイン**
-            - GetEntraSignInLogsV1 で取得した High リスクサインインのユーザー・アプリ・場所
+            - GetRiskSignIns で取得した High リスクサインインのユーザー・アプリ・場所
 
             #### 推奨優先対応ユーザー一覧
             上記の判定で該当したユーザーを優先度順（High → Medium → Low）に列挙し、
@@ -314,7 +330,7 @@ SkillGroups:
             - パディング: セクション間 20px、セル内 8px 12px
             - 全スタイルをインライン (style 属性) で適用すること
 
-            ## Step 7: メール送信
+            ## Step 8: メール送信
             生成した HTML 全文を SendSocReportEmail の ReportHtml パラメータに渡して送信する。
 
             - HTML の生成が完了したら、必ずそのまま直ちに SendSocReportEmail を呼び出すこと。
@@ -332,8 +348,7 @@ SkillGroups:
           - GetWeeklySignInTrend
           - GetAnomalousFailedSignIns
           - GetFailedSignInDetails
-          - GetRiskSignIns
-          - GetEntraRiskyUsers
+          - GetRiskSignIns          - GetEntraData          - GetEntraRiskyUsers
           - SendSocReportEmail
 
   # ── KQL Skills (Sentinel SigninLogs) ──────────────────────────────
