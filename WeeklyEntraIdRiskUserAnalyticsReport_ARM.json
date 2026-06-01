@@ -4,7 +4,7 @@
   "parameters": {
     "logicAppName": {
       "type": "string",
-      "defaultValue": "SocReportEmailLogicApp",
+      "defaultValue": "PluginLogicApp_WeeklyEntraIdRiskUserAnalyticsReport",
       "metadata": {
         "description": "Logic App リソースの名前"
       }
