@@ -55,7 +55,7 @@ Security Copilot（週次スケジュール or 手動）
               ├── 週次サインイン傾向分析（今週 vs 先週）
               ├── 異常失敗ユーザー検出（氏名・役職・ロール付き）
               ├── 全体傾向分析・危険ユーザー兆候レポート
-              ├── 失敗サインイン詳細・リスクイベント・リスクユーザー
+              ├── 国別サインイン分布・リスクイベント・失敗詳細
               └── 推奨アクション（自動判定）
                     │
                     └── SendSocReportEmail
@@ -72,10 +72,13 @@ Security Copilot（週次スケジュール or 手動）
 |---|---|---|---|
 | 傾向分析 | `GetWeeklySignInTrend` | Sentinel KQL | 今週の日別サインイン集計 + 先週同曜日との増減列（成功・失敗・失敗率） |
 | 異常検出 | `GetAnomalousFailedSignIns` | Sentinel KQL | 平均+2σ超過の異常失敗ユーザー検出 |
-| 失敗詳細 | `GetFailedSignInDetails` | Sentinel KQL | ユーザー/エラーコード/国/IP 別の失敗集計（上位100件） |
-| リスクサインイン | `GetRiskSignIns` | Sentinel KQL | リスク付きサインイン + 高リスクサインイン詳細 + リスクユーザー抽出 |
+| 失敗詳細 | `GetFailedSignInDetails` | Sentinel KQL | ユーザー/エラーコード/国/IP 別の失敗集計（上位30件） |
+| リスクサインイン | `GetRiskSignIns` | Sentinel KQL | リスク付きサインイン + 高リスクサインイン詳細（上位50件） |
 | ユーザープロファイル | `GetEntraData` | Entra プラグイン | 検出ユーザーの氏名・役職・部署・ディレクトリロール |
 | メール送信 | `SendSocReportEmail` | LogicApp | HTML レポートを Outlook メールで送信 |
+
+> **Note**: KQL スキルの取得件数はコンテキストウィンドウ (128K トークン) 超過防止のため制限されています。  
+> 環境に応じて `take` の値を調整してください。
 
 ---
 
@@ -116,7 +119,7 @@ WeeklyEntraIdRiskUserAnalyticsReport/
 ## 生成レポートの仕様
 
 ### デザイン
-- **フォント**: Meiryo, 'メイリオ', 'Segoe UI', sans-serif
+- **フォント**: Meiryo, 'Segoe UI', sans-serif
 - **プライマリカラー**: #0078D4（Microsoft Blue）
 - **レイアウト**: `<table>` ベース・CSS インラインスタイル（Outlook 完全互換）
 - **幅**: max-width: 680px（メール表示最適化）
@@ -127,14 +130,15 @@ WeeklyEntraIdRiskUserAnalyticsReport/
 | セクション | 内容 |
 |---|---|
 | **ヘッダー** | タイトル・分析期間（過去7日間）・生成日時（JST） |
-| **セクション 1** | KPI サマリーカード ×4（今週失敗数＋先週比・異常検出ユーザー数・リスクユーザー数・高リスクサインイン数） |
+| **セクション 1** | KPI サマリーカード ×4（今週失敗数＋先週比・異常検出ユーザー数・高リスクサインイン数・先週比失敗率変化） |
 | **セクション 2** | **週次サインイン傾向分析**（今週7日分：成功数/失敗数/合計/失敗率 + 先週同曜日との増減列（▲▼色分け）+ サマリー行 + 傾向サマリー） |
-| **セクション 3** | **異常失敗ユーザー検出レポート**（UPN / 氏名 / 役職 / ロール / 失敗数 / エラーコード / 国 / IP） |
-| **セクション 4** | 全体傾向分析・危険ユーザー兆候レポート（事実ベース分析・推奨優先対応ユーザー一覧） |
-| **セクション 5** | リスクイベント種別（イベント種別 / リスクレベル / 件数） |
-| **セクション 6** | 失敗サインイン詳細（ユーザー / エラーコード / エラー理由 / 場所 / IP / 発生数） |
-| **セクション 7** | 高リスクサインイン一覧（ユーザー / 日時 / アプリ / 国 / リスク詳細） |
-| **セクション 8** | 推奨アクション（データに基づき自動判定） |
+| **セクション 3** | **異常失敗ユーザー検出レポート**（UPN / 氏名 / 役職 / 失敗数 / エラーコード / 国 / IP） |
+| **セクション 4** | **全体傾向分析・危険ユーザー兆候レポート**（事実ベース分析・推奨優先対応ユーザー一覧） |
+| **セクション 5** | 国別サインイン分布（国名 / サインイン数 / 割合、上位10カ国、海外行ハイライト） |
+| **セクション 6** | リスクイベント種別（イベント種別 / リスクレベル / 件数） |
+| **セクション 7** | 失敗サインイン詳細（ユーザー / エラーコード / エラー理由 / 場所 / IP / 発生数） |
+| **セクション 8** | 高リスクサインイン一覧（ユーザー / 日時 / アプリ / 国 / リスク詳細） |
+| **セクション 9** | 推奨アクション（データに基づき自動判定） |
 | **フッター** | 自動生成注記・エージェント名・日時 |
 
 ### 異常検出のロジック
@@ -142,12 +146,13 @@ WeeklyEntraIdRiskUserAnalyticsReport/
 | 項目 | 内容 |
 |---|---|
 | **検出基準** | 過去7日間の失敗サインイン数が全ユーザー平均 + 2標準偏差を超えるユーザー |
-| **出力情報** | UPN / 氏名 / 役職 / 部署 / ディレクトリロール / 失敗数 / 閾値 / エラーコード / IP / 国 |
+| **出力情報** | UPN / 氏名 / 役職 / 失敗数 / 閾値 / エラーコード / IP / 国 |
 | **特権アカウント強調** | Global Admin、Security Admin 等のロールを持つユーザーは赤色ハイライト |
 
 ### エラーコード日本語説明
 
 失敗サインイン詳細テーブルでは、Microsoft 公式ドキュメントに基づくエラーコードの日本語説明を付与します。  
+特に重要なコード: `50053`（アカウントロック/ブルートフォース）、`50074`/`50076`（MFA失敗）、`50126`（無効な認証情報）、`53003`（条件付きアクセスブロック）  
 公式リファレンス: https://learn.microsoft.com/ja-jp/entra/identity-platform/reference-error-codes
 
 ---
@@ -178,6 +183,8 @@ az deployment group create \
   --parameters emailAddress="soc-team@contoso.com"
 ```
 
+デプロイされる Logic App 名のデフォルトは `PluginLogicApp_WeeklyEntraIdRiskUserAnalyticsReport` です。
+
 #### ステップ A-2 — Office 365 API 接続の認証
 
 ```
@@ -198,7 +205,7 @@ Azure ポータル → リソースグループ → office365 (API 接続) → [
 |---|---|---|
 | **Logic App サブスクリプション ID** | Logic App の Azure サブスクリプション ID | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
 | **Logic App リソースグループ** | Logic App のリソースグループ名 | `rg-securitycopilot` |
-| **Logic App ワークフロー名** | Logic App のワークフロー名 | `SocReportEmailLogicApp` |
+| **Logic App ワークフロー名** | Logic App のワークフロー名 | `PluginLogicApp_WeeklyEntraIdRiskUserAnalyticsReport` |
 | **Sentinel サブスクリプション ID** | Sentinel の Azure サブスクリプション ID | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
 | **Sentinel リソースグループ** | Sentinel ワークスペースのリソースグループ名 | `rg-sentinel` |
 | **Sentinel ワークスペース名** | Log Analytics ワークスペース名 | `law-sentinel` |
@@ -229,12 +236,12 @@ Sentinel 不要・Logic App 不要の簡易版です。
 
 | 症状 | 確認ポイント |
 |---|---|
+| **コンテキスト長超過エラー** | KQL スキルの `take` 値を削減する（GetFailedSignInDetails: 30、GetRiskSignIns: 50 が既定値）。環境のログ量が多い場合はさらに小さくする |
 | Logic App がトリガーされない | プラグイン設定の Logic App 名・リソースグループ・サブスクリプション ID を確認 |
 | メールが届かない | Azure ポータルで `office365` API 接続の認証状態を確認 |
 | KQL スキルでエラー | Sentinel 設定（テナント ID・サブスクリプション ID・リソースグループ・ワークスペース名）を確認 |
 | SigninLogs テーブルにデータがない | Entra 管理センター → 監視 → 診断設定 で SigninLogs の Log Analytics 転送を確認 |
 | リスクユーザーが常に 0 件 | Entra ID P2 ライセンスが割り当てられているか確認 |
-| `GetEntraRiskyUsers` で権限エラー | 本バージョンでは使用しません。KQL の `GetRiskSignIns` でリスク情報を取得 |
 | `GetEntraData` でユーザー情報取得失敗 | エージェントはスキップして UPN のみでレポートを生成 |
 
 ---
