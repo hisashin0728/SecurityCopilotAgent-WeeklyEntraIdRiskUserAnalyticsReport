@@ -427,7 +427,7 @@ SkillGroups:
         DisplayName: 失敗サインイン詳細集計
         Description: >-
           Sentinel の SigninLogs テーブルから過去 7 日間の失敗サインインを
-          ユーザー・エラーコード・国・IP 別に集計して上位 100 件を返す。
+          ユーザー・エラーコード・国・IP 別に集計して上位 30 件を返す。
         Settings:
           Target: Sentinel
           TenantId: "{{SentinelTenantId}}"
